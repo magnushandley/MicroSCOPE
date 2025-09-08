@@ -192,28 +192,28 @@ void PreselectionModule::Initialise()
         TH1D histFlashMatchScore = nodes[i].Histo1D(FlashMatchScoreModel, "nu_flashmatch_score").GetValue();
         histFlashMatchScore.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
         preSelectedFlashMatchScoreVec.push_back(histFlashMatchScore);
-        TH1D histTopoScore = nodes[i].Histo1D(TopologicalScoreModel, "topological_score").GetValue();
+        //TH1D histTopoScore = nodes[i].Histo1D(TopologicalScoreModel, "topological_score").GetValue();
     }
 
     // Example of creating a stacked histogram
 
-    Plotter::StackedHist(preSelectedNuE2Vec,
+    Plotter::FullDataMCSignalPlot(preSelectedNuE2Vec,
                          fSampleLabels,
-                         "preselection_stacked_hist_NeutrinoEnergy2",
+                         "preselection_full_hist_NeutrinoEnergy2",
                          false, // logy
                          fSampleWeights);
 
-    Plotter::StackedHist(preSelectedFlashMatchScoreVec,
+    Plotter::FullDataMCSignalPlot(preSelectedFlashMatchScoreVec,
                          fSampleLabels,
-                         "preselection_stacked_hist_FlashMatchScore",
+                         "preselection_full_hist_FlashMatchScore",
                          false, // logy
                          fSampleWeights);
 
-    Plotter::StackedHist(preSelectedTopologicalScoreVec,
-                         fSampleLabels,
-                         "preselection_stacked_hist_TopologicalScore",
-                         false, // logy
-                         fSampleWeights);
+    //Plotter::FullDataMCSignalPlot(preSelectedTopologicalScoreVec,
+    //                     fSampleLabels,
+    //                     "preselection_full_hist_TopologicalScore",
+    //                     false, // logy
+    //                     fSampleWeights);
 }
 
 void PreselectionModule::Finalise()

@@ -38,6 +38,12 @@ public:
                         bool logy = false,
                         const std::vector<double> weights = {});
 
+    static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
+                                      const std::vector<std::string>& labels,
+                                      const std::string& basename,
+                                      bool logy = false,
+                                      const std::vector<double> weights = {});
+
 private:
     
     Plotter()  = default;
