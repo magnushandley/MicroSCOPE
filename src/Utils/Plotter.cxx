@@ -10,6 +10,7 @@
 #include <TFile.h>
 #include <TSystem.h>
 #include <iostream>
+#include <TLine.h>
 
 using namespace Analysis;
 
@@ -151,7 +152,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     
     if (hists.empty() || hists.size() != labels.size()) return;
 
-    ApplyStyle("mdh_nice");
+    ApplyStyle("prelim");
     auto c = MakeCanvas(basename);
     if (logy) c->SetLogy();
 
@@ -163,6 +164,16 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     std::vector<TH1D*> signalHists;
     std::vector<TH1D*> dataHists;
     std::vector<TH1D*> bkgHists;
+
+    //TCanvas *stackCanvas = new TCanvas("stackCanvas","MC Stack with Signal and Data",800,800);
+    c->Divide(1,2);
+
+    // Top pad: main plot                                                             
+    c->cd(1);
+    gPad->UseCurrentStyle();
+    gPad->SetPad(0.0, 0.3, 1.0, 1.0);
+    gPad->SetBottomMargin(0.1);
+    gPad->SetLeftMargin(0.15);
 
     for (size_t i = 0; i < hists.size(); ++i) {
         auto& hist = hists[i];
@@ -306,6 +317,67 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     }
 
     leg->Draw();
+
+    // Bottom pad: ratio panel                                                        
+    c->cd(2);
+    gPad->UseCurrentStyle();
+    gPad->SetPad(0.0, 0.0, 1.0, 0.3);
+    gPad->SetTopMargin(0.05);
+    gPad->SetBottomMargin(0.3);
+    gPad->SetLeftMargin(0.15);
+
+    // Build and draw ratio histogram                                                 
+    TH1D *ratio = (TH1D*)dataHists[0]->Clone("ratio");
+    ratio->SetDirectory(0);
+    ratio->SetTitle("");
+    ratio->Sumw2();
+    ratio->Divide(hBkgTotal);
+    ratio->GetYaxis()->SetRangeUser(0.8,1.2);
+
+    ratio->SetMarkerStyle(20);
+    ratio->SetMarkerColor(kBlack);
+    ratio->SetLineColor(kBlack);
+    ratio->GetYaxis()->SetTitle("Data / MC");
+    //ratio->GetYaxis()->SetTitleSize(0.08);                                          
+    //ratio->GetYaxis()->SetLabelSize(0.06);                                          
+    ratio->GetYaxis()->SetLabelOffset(0.0);
+    ratio->GetYaxis()->SetTitleOffset(0.5);
+    ratio->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
+    ratio->GetXaxis()->SetTitleSize(0.08);
+    ratio->GetXaxis()->SetLabelSize(0.08);
+    ratio->GetYaxis()->SetTitleSize(0.08);
+    ratio->GetYaxis()->SetLabelSize(0.08);
+
+    // Draw MC statistical uncertainty band in ratio panel                            
+    TH1D *ratioMC = (TH1D*)hBkgTotal->Clone("ratioMC");
+    ratioMC->SetDirectory(0);
+    ratioMC->SetTitle("");
+    ratioMC->GetYaxis()->SetTitleOffset(0.5);
+    ratioMC->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
+    ratioMC->Sumw2();
+    ratioMC->GetYaxis()->SetRangeUser(0.8,1.2);
+    ratioMC->GetYaxis()->SetTitle("Data / MC");
+    ratioMC->Divide(hBkgTotal);
+    //ratioMC->SetFillStyle(3001);                    
+    ratioMC->SetFillColorAlpha(kGray + 2, 0.3);     
+    ratioMC->SetLineColor(kBlack);
+    ratioMC->GetXaxis()->SetTitleSize(0.08);
+    ratioMC->GetXaxis()->SetLabelSize(0.08);
+    ratioMC->GetYaxis()->SetTitleSize(0.08);
+    ratioMC->GetYaxis()->SetLabelSize(0.08);
+    ratioMC->Draw("E2 SAME");
+
+    // Draw ratio points on top                                                       
+    ratio->Draw("E1 SAME");
+
+    // Horizontal line at 1
+    double xlow = ratio->GetXaxis()->GetXmin();
+    double xhigh = ratio->GetXaxis()->GetXmax();                                                           
+    TLine *unity = new TLine(xlow,1.0,xhigh,1.0);
+    unity->SetLineStyle(2);
+    unity->SetLineColor(kRed);
+    unity->Draw();
+    c->Update();
 
     c->SaveAs((basename + ".png").c_str());
     c->SaveAs((basename + ".pdf").c_str());
