@@ -159,9 +159,13 @@ void PreselectionModule::Initialise()
 
     // Now we can write each filtered RNode to a new TTree in the output file
 
+    std::vector<TH1D> preSelectednpfpsVec;
     std::vector<TH1D> preSelectedNuE2Vec;
     std::vector<TH1D> preSelectedFlashMatchScoreVec;
     std::vector<TH1D> preSelectedTopologicalScoreVec;
+    std::vector<TH1D> preSelectedShrPhivVec;
+    std::vector<TH1D> preSelectedShrFitPzFracVec;
+    std::vector<TH1D> preSelectedShrFitThetaVec;
 
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         std::cout << "\n[Preselection] Writing output for sample: " << fSampleLabels[i] << '\n';
@@ -169,33 +173,106 @@ void PreselectionModule::Initialise()
         nodes[i].Snapshot(fTreeName, fOutFiles[i], fVarsToKeep, opt);
 
 
-        ROOT::RDF::TH1DModel NuE2Model(
-            ("pre_hist_" + fSampleLabels[i]).c_str(),
-            ";Neutrino Energy [MeV];Count",
-            20, 0.0, 500.0);
+        //ROOT::RDF::TH1DModel NuE2Model(
+        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
+        //    ";Neutrino Energy [MeV];Count",
+        //    20, 0.0, 500.0);
 
-        ROOT::RDF::TH1DModel FlashMatchScoreModel(
-            ("pre_hist_" + fSampleLabels[i]).c_str(),
-            ";Flash Match Score;Count",
-            20, 0.0, 15.0);
+        //ROOT::RDF::TH1DModel FlashMatchScoreModel(
+        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
+        //    ";Flash Match Score;Count",
+        //    20, 0.0, 15.0);
 
-        ROOT::RDF::TH1DModel TopologicalScoreModel(
-            ("pre_hist_" + fSampleLabels[i]).c_str(),
-            ";Topological Score;Count",
-            30, 0.0, 1.0);
+        //ROOT::RDF::TH1DModel TopologicalScoreModel(
+        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
+        //    ";Topological Score;Count",
+        //    30, 0.0, 1.0);
 
         //preSelectedHistVec.push_back(
             //nodes[i].Histo1D(enModel, "NeutrinoEnergy2").GetPtr());
-        TH1D histNuE2 = nodes[i].Histo1D(NuE2Model, "NeutrinoEnergy2").GetValue();
-        histNuE2.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
-        preSelectedNuE2Vec.push_back(histNuE2);
-        TH1D histFlashMatchScore = nodes[i].Histo1D(FlashMatchScoreModel, "nu_flashmatch_score").GetValue();
-        histFlashMatchScore.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
-        preSelectedFlashMatchScoreVec.push_back(histFlashMatchScore);
+        //TH1D histNuE2 = nodes[i].Histo1D(NuE2Model, "NeutrinoEnergy2").GetValue();
+        //histNuE2.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
+        //preSelectedNuE2Vec.push_back(histNuE2);
+        //TH1D histFlashMatchScore = nodes[i].Histo1D(FlashMatchScoreModel, "nu_flashmatch_score").GetValue();
+        //histFlashMatchScore.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
+        //preSelectedFlashMatchScoreVec.push_back(histFlashMatchScore);
         //TH1D histTopoScore = nodes[i].Histo1D(TopologicalScoreModel, "topological_score").GetValue();
+
+        preSelectednpfpsVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_npfps_" + fSampleLabels[i]).c_str(),
+                "n_pfps", 
+                "Number of PFParticles",
+                "Count",
+                5, 0.5, 5.5));
+
+        preSelectedNuE2Vec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_NeutrinoEnergy2_" + fSampleLabels[i]).c_str(),
+                "NeutrinoEnergy2",
+                "Neutrino Energy [MeV]",
+                "Count",
+                20, 0.0, 500.0));
+
+        preSelectedFlashMatchScoreVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_FlashMatchScore_" + fSampleLabels[i]).c_str(),
+                "nu_flashmatch_score", 
+                "Flash Match Score",
+                "Count",
+                20, 0.0, 15.0));
+
+        preSelectedTopologicalScoreVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_TopologicalScore_" + fSampleLabels[i]).c_str(),
+                "topological_score", 
+                "Topological Score",
+                "Count",
+                30, 0.0, 1.0));
+
+        preSelectedShrPhivVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_ShrPhiv_" + fSampleLabels[i]).c_str(),
+                "shr_phi_v", 
+                "Shr Phi [rad]",
+                "Count",
+                20, -3.14, 3.14,
+                true)); // remove vector duplicates by taking first element only
+
+        preSelectedShrFitPzFracVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_ShrFitPzFrac_" + fSampleLabels[i]).c_str(),
+                "shr_pz_v",
+                "Shr Fit Pz Frac",
+                "Count",
+                20, -1.0, 1.0,
+                true)); // remove vector duplicates by taking first element only
+
+        preSelectedShrFitThetaVec.push_back(
+            Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                ("preselection_hist_ShrFitTheta_" + fSampleLabels[i]).c_str(),
+                "shr_theta_v",
+                "Shr Fit Theta [rad]",
+                "Count",
+                20, 0.0, 3.14,
+                true)); // remove vector duplicates by taking first element only
+
     }
 
     // Example of creating a stacked histogram
+
+    Plotter::FullDataMCSignalPlot(preSelectednpfpsVec,
+                        fSampleLabels,
+                        "preselection_full_hist_npfps",
+                        false, // logy
+                        fSampleWeights);
 
     Plotter::FullDataMCSignalPlot(preSelectedNuE2Vec,
                          fSampleLabels,
@@ -209,11 +286,29 @@ void PreselectionModule::Initialise()
                          false, // logy
                          fSampleWeights);
 
-    //Plotter::FullDataMCSignalPlot(preSelectedTopologicalScoreVec,
-    //                     fSampleLabels,
-    //                     "preselection_full_hist_TopologicalScore",
-    //                     false, // logy
-    //                     fSampleWeights);
+    Plotter::FullDataMCSignalPlot(preSelectedShrPhivVec,
+                            fSampleLabels,
+                            "preselection_full_hist_ShrPhiv",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedTopologicalScoreVec,
+                         fSampleLabels,
+                         "preselection_full_hist_TopologicalScore",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrFitPzFracVec,
+                            fSampleLabels,
+                            "preselection_full_hist_ShrFitPzFrac",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrFitThetaVec,
+                            fSampleLabels,
+                            "preselection_full_hist_ShrFitTheta",
+                            false, // logy
+                            fSampleWeights);
 }
 
 void PreselectionModule::Finalise()

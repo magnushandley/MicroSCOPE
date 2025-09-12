@@ -11,6 +11,7 @@
 #include <TSystem.h>
 #include <iostream>
 #include <TLine.h>
+#include <ROOT/RDataFrame.hxx>
 
 using namespace Analysis;
 
@@ -42,6 +43,40 @@ void Plotter::ApplyStyle(const std::string& style)
     else {           // "default"
         gStyle->SetOptStat(0); 
     }
+}
+
+TH1D Plotter::CreateTH1DFromRNode(
+    ROOT::RDF::RNode node,
+    const std::string& name,
+    const std::string& varName,
+    const std::string& xLabel,
+    const std::string& yLabel,
+    int nBins,
+    double xMin,
+    double xMax,
+    bool removeVectorDuplicates)
+{
+    std::string axisString = std::string(";") + xLabel + ";" + yLabel;
+    ROOT::RDF::TH1DModel model(name.c_str(), axisString.c_str(), nBins, xMin, xMax);
+
+    // If the variable is a vector, can remove duplicates by taking only the first element
+    if (removeVectorDuplicates) {
+        // Define a new column that extracts the first element of the vector,
+        // if vector is empty, return default value -9999.0
+        auto firstElementCol = node.Define((varName + "_first").c_str(),
+            [](const ROOT::VecOps::RVec<float>& vec) {
+                return vec.empty() ? -9999.0f : vec[0];
+            }, {varName.c_str()});
+        TH1D hist = firstElementCol.Histo1D(model, (varName + "_first").c_str()).GetValue();
+        hist.SetDirectory(nullptr);   // decouple from any current file
+        hist.SetName(name.c_str());
+        return hist;
+    }
+
+    TH1D hist = node.Histo1D(model, varName).GetValue();
+    hist.SetDirectory(nullptr);   // decouple from any current file
+    hist.SetName(name.c_str());
+    return hist;
 }
 
 // ----------------------------------------------------------------------//

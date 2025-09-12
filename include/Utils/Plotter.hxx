@@ -8,8 +8,18 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <iostream>
+#include <TH1.h>
 #include <TH1D.h>
+#include <THStack.h>
+#include <TGraph.h>
+#include <TCanvas.h>
+#include <TLegend.h>
+#include <TStyle.h>
+#include <TFile.h>
+#include <TSystem.h>
+#include <iostream>
+#include <TLine.h>
+#include <ROOT/RDataFrame.hxx>
 
 class TH1;
 class THStack;
@@ -23,6 +33,18 @@ public:
     // ------------------------------------------------------------------
     //  Single-histogram helpers
     // ------------------------------------------------------------------
+    
+    static TH1D CreateTH1DFromRNode(
+        ROOT::RDF::RNode node,
+        const std::string& name,
+        const std::string& varName,
+        const std::string& xLabel,
+        const std::string& yLabel,
+        int nBins,
+        double xMin,
+        double xMax,
+        bool removeVectorDuplicates = false);
+
     /** Draw a TH1 and write <basename>.png + .pdf into the current dir. */
     static void SaveHist(TH1* h,
                          const std::string& basename,
@@ -31,6 +53,7 @@ public:
     // ------------------------------------------------------------------
     //  Stacked histogram helpers
     /** Draw a stack of TH1s with labels and save as <basename>.png + .pdf. */
+
 
     static void StackedHist(std::vector<TH1D>& hists,
                         const std::vector<std::string>& labels,

@@ -125,7 +125,8 @@ void SlimmerModule::Initialise()
                 float bMax = b.empty() ? big : *std::max_element(b.begin(), b.end());
                 return std::max(aMax, bMax);
             },
-            {"trk_sce_start_z_v", "trk_sce_end_z_v"});
+            {"trk_sce_start_z_v", "trk_sce_end_z_v"})
+    .Filter("swtrig==1"); // keep only events passing the software trigger
 
     ROOT::RDF::RSnapshotOptions opt;
     opt.fMode = "RECREATE";
