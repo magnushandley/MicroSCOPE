@@ -182,10 +182,13 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     // I am using TH1D objects rather than pointers because the pointers returned by RDataFrame are
     // smart pointers, which I think are deallocated before we can use them here. Had a bunch of seg faults...
 
-    std::cout << "[Plotter] Creating stacked histogram: " << basename << std::endl;
+    std::cout << "[Plotter] Creating full stacked histogram: " << basename << std::endl;
     static const Int_t colors[] = {TColor::GetColor("#e69f00"),TColor::GetColor("#5664e9"),TColor::GetColor("#009e73"), kOrange, kViolet, kCyan, kMagenta, kYellow};
     
+    std::cout << "Number of entries in " << labels[0] << ": " << hists.back().GetEntries() << std::endl;
+    std::cout << "Hists size: " << hists.size() << ", Labels size: " << labels.size() << std::endl;
     if (hists.empty() || hists.size() != labels.size()) return;
+    std::cout << "Number of histograms: " << hists.size() << std::endl;
 
     ApplyStyle("prelim");
     auto c = MakeCanvas(basename);
@@ -367,7 +370,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratio->SetTitle("");
     ratio->Sumw2();
     ratio->Divide(hBkgTotal);
-    ratio->GetYaxis()->SetRangeUser(0.8,1.2);
+    ratio->GetYaxis()->SetRangeUser(0.6,1.4);
 
     ratio->SetMarkerStyle(20);
     ratio->SetMarkerColor(kBlack);
@@ -390,7 +393,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratioMC->GetYaxis()->SetTitleOffset(0.5);
     ratioMC->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
     ratioMC->Sumw2();
-    ratioMC->GetYaxis()->SetRangeUser(0.8,1.2);
+    ratioMC->GetYaxis()->SetRangeUser(0.6,1.4);
     ratioMC->GetYaxis()->SetTitle("Data / MC");
     ratioMC->Divide(hBkgTotal);
     //ratioMC->SetFillStyle(3001);                    
