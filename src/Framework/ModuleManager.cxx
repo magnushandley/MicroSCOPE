@@ -39,41 +39,38 @@ void ModuleManager::Run()
     for (auto& m : fModules) {
         std::cout << "  ↳ Initialising " << m->Name() << " …\n";
         m->Initialise();
-        
-    }
 
     // Have to call this after Initialise() to ensure all modules are ready - in the slimmer this requires
     // the TChain to be built first, in the others it requires available data frames.
 
-    const Long64_t nEntries = DetermineNEntries();
-    std::cout << "[ModuleManager] Will process " << nEntries
-             << " entries.\n";
+        const Long64_t nEntries = DetermineNEntries();
+        std::cout << "[ModuleManager] Will process " << nEntries
+                << " entries.\n";
 
-    //------------------------------------------------------------------//
-    // 2.  Event loop - stopwatch only gives useful information if we actually loop over events in Execute()
-    //------------------------------------------------------------------//
+        //------------------------------------------------------------------//
+        // 2.  Event loop - stopwatch only gives useful information if we actually loop over events in Execute()
+        //------------------------------------------------------------------//
 
-    TStopwatch sw;
-    sw.Start();
-    for (Long64_t i = 0; i < nEntries; ++i) {
-        if (i%10000==0)
-            std::cout << "\r[ModuleManager] " << std::setw(7) << i
-                      << " / " << nEntries << std::flush;
+        TStopwatch sw;
+        sw.Start();
+        for (Long64_t i = 0; i < nEntries; ++i) {
+            if (i%10000==0)
+                std::cout << "\r[ModuleManager] " << std::setw(7) << i
+                        << " / " << nEntries << std::flush;
 
-        for (auto& m : fModules)
+
             m->Execute(i);
-    }
-    sw.Stop();
-    const Double_t cpuTime = sw.CpuTime();
-    std::cout << "\r[ModuleManager] Finished loop in "
-              << std::fixed << std::setprecision(3)
-              << cpuTime << " s (" << (cpuTime/nEntries) * 1e3
-              << " ms / evt)\n";
+        }
+        sw.Stop();
+        const Double_t cpuTime = sw.CpuTime();
+        std::cout << "\r[ModuleManager] Finished loop in "
+                << std::fixed << std::setprecision(3)
+                << cpuTime << " s (" << (cpuTime/nEntries) * 1e3
+                << " ms / evt)\n";
 
-    //------------------------------------------------------------------//
-    // 3.  Finalise
-    //------------------------------------------------------------------//
-    for (auto& m : fModules) {
+        //------------------------------------------------------------------//
+        // 3.  Finalise
+        //------------------------------------------------------------------//
         std::cout << "  ↳ Finalising " << m->Name() << " …\n";
         m->Finalise();
     }
