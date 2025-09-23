@@ -24,20 +24,21 @@ public:
     std::string Name() const override { return "Slimmer"; }
 
 private:
-    // Helper: build the input chain from a comma-separated list
-    std::unique_ptr<TChain> BuildInputChain(const std::string& files,
+    // Helper: build the input vector of RDataFrames
+    std::vector<std::unique_ptr<ROOT::RDataFrame>> BuildDataFrames(const std::vector<std::string>& files,
                                             const std::string& treeName) const;
 
     /// Configuration
-    std::string        fInputFiles;      ///< comma-separated list
+    std::vector<std::string> fInputFiles;      ///< comma-separated list
     std::string        fTreeName;        ///< name of the input TTree
-    std::string        fOutFile;         ///< result file
+    std::vector<std::string> fOutputFiles;         ///< result files
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
-    std::string        fRunLabel;        ///< “data2023B”, “bnb_overlay”, …
+    std::string        fRunLabel;        ///< “run_x”, …
 
     /// Working objects
     std::unique_ptr<TChain>     fChain;
     std::unique_ptr<ROOT::RDataFrame> fRDF;
+    std::vector<std::unique_ptr<ROOT::RDataFrame>> dfVec; ///< DataFrames for each input file
 };
 
 } // namespace Analysis
