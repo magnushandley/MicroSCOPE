@@ -16,6 +16,10 @@
 #include <TChain.h>
 #include <cstdio>
 
+#include <TMVA/Factory.h>
+#include <TMVA/DataLoader.h>
+#include <TMVA/Tools.h>
+
 using namespace Analysis;
 
 //------------------------------------------------------------------------------
@@ -196,6 +200,90 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
     return {train_signal_File, train_bkg_File, test_signal_File, test_bkg_File};
 }
 
+void BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
+                              const std::string& trainBkgFile,
+                              const std::string& testSignalFile,
+                              const std::string& testBkgFile)
+{
+    // Build chains so we can control the split with SplitMode=Block
+    TChain sigChain("tree");
+    TChain bkgChain("tree");
+
+    // Add in the order: TRAIN first, then TEST
+    sigChain.Add(trainSignalFile.c_str());
+    sigChain.Add(testSignalFile.c_str());
+
+    bkgChain.Add(trainBkgFile.c_str());
+    bkgChain.Add(testBkgFile.c_str());
+
+    // Count how many entries belong to the training portion
+    Long64_t nTrainSig = 0, nTrainBkg = 0;
+    {
+        std::unique_ptr<TFile> fSig{TFile::Open(trainSignalFile.c_str())};
+        if (!fSig || fSig->IsZombie()) throw std::runtime_error("[BDTTrainModule] Cannot open " + trainSignalFile);
+        TTree* tSig = nullptr; fSig->GetObject("tree", tSig);
+        if (!tSig) throw std::runtime_error("[BDTTrainModule] 'tree' not found in " + trainSignalFile);
+        nTrainSig = tSig->GetEntries();
+    }
+    {
+        std::unique_ptr<TFile> fBkg{TFile::Open(trainBkgFile.c_str())};
+        if (!fBkg || fBkg->IsZombie()) throw std::runtime_error("[BDTTrainModule] Cannot open " + trainBkgFile);
+        TTree* tBkg = nullptr; fBkg->GetObject("tree", tBkg);
+        if (!tBkg) throw std::runtime_error("[BDTTrainModule] 'tree' not found in " + trainBkgFile);
+        nTrainBkg = tBkg->GetEntries();
+    }
+
+    // Determine whether a per-event weight exists
+    bool hasSampleWeight = false;
+    {
+        std::unique_ptr<TFile> fProbe{TFile::Open(trainSignalFile.c_str())};
+        TTree* tProbe = nullptr; fProbe->GetObject("tree", tProbe);
+        if (tProbe && tProbe->GetBranch("sample_weight")) hasSampleWeight = true;
+    }
+
+    // TMVA setup
+    TMVA::Tools::Instance();
+    std::unique_ptr<TFile> outFile{TFile::Open("tmva_training_output.root", "RECREATE")};
+
+    TMVA::Factory factory("TMVAClassification", outFile.get(),
+                          "!V:!Silent:Color:DrawProgressBar:AnalysisType=Classification");
+    TMVA::DataLoader loader("dataset");
+
+    // Register training variables from fTrainVars
+    for (const auto& var : fTrainVars) {
+        loader.AddVariable(var.c_str(), 'F');
+    }
+
+    // Add the signal and background trees
+    loader.AddSignalTree(&sigChain, 1.0);
+    loader.AddBackgroundTree(&bkgChain, 1.0);
+
+    // Optional event weights
+    if (hasSampleWeight) {
+        loader.SetSignalWeightExpression("sample_weight");
+        loader.SetBackgroundWeightExpression("sample_weight");
+    }
+
+    // Use Block split so the first N entries (our TRAIN files) are used for training
+    std::ostringstream prep;
+    prep << "nTrain_Signal=" << nTrainSig
+         << ":nTrain_Background=" << nTrainBkg
+         << ":SplitMode=Block:NormMode=None:!V";
+
+    loader.PrepareTrainingAndTestTree("", "", prep.str().c_str());
+
+    // Book a simple BDTG. You can later move these options into the TEnv cfg.
+    factory.BookMethod(&loader, TMVA::Types::kBDT, "BDTG",
+                       "!H:!V:NTrees=200:MinNodeSize=2.5%:MaxDepth=3:BoostType=Grad:"
+                       "Shrinkage=0.1:nCuts=20");
+
+    factory.TrainAllMethods();
+    factory.TestAllMethods();
+    factory.EvaluateAllMethods();
+
+    // XML weights will be in: dataset/weights/TMVAClassification_BDTG.weights.xml
+}
+
 
 
 Long64_t BDTTrainModule::EntryCount() const
@@ -221,9 +309,11 @@ void BDTTrainModule::Initialise()
     std::string train_bkg_File = sampleVec[1];
     std::string test_signal_File = sampleVec[2];
     std::string test_bkg_File = sampleVec[3];
+    
+    // Train the BDT using the selected variables (fTrainVars) and the prepared samples
+    TrainBDT(train_signal_File, train_bkg_File, test_signal_File, test_bkg_File);
 
-    
-    
+    std::cout << "[BDTTrainModule] TMVA training complete. Weights XML written under dataset/weights/." << std::endl;
 }
 
 //------------------------------------------------------------------------------
