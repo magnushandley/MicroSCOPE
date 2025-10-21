@@ -51,11 +51,15 @@ BDTTrainModule::BDTTrainModule(const TEnv& cfg)
         fVarsToKeep.push_back(keepItem);
     }
 
-    std::stringstream ssTrainVars{cfg.GetValue("BDTTrainModule.TrainVariables", "")};
+    std::stringstream ssTrainVars{cfg.GetValue("BDTTrainModule.TrainVars", "")};
     std::string var;
     while (ssTrainVars >> var) {
         if (var.back()==',') var.pop_back();
         fTrainVars.push_back(var);
+    }
+    std::cout << "[BDTTrainModule] Training variables:\n";
+    for (const auto& v : fTrainVars) {
+        std::cout << "  " << v << "\n";
     }
 
     std::stringstream ssWeights{cfg.GetValue("BDTTrainModule.SampleWeights", "")};
@@ -224,6 +228,8 @@ void BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
         TTree* tSig = nullptr; fSig->GetObject("tree", tSig);
         if (!tSig) throw std::runtime_error("[BDTTrainModule] 'tree' not found in " + trainSignalFile);
         nTrainSig = tSig->GetEntries();
+        for (auto& v : fTrainVars) if (!tSig->GetBranch(v.c_str()))
+        std::cerr << "[BDTTrainModule] SIGNAL MISSING branch: " << v << "\n";
     }
     {
         std::unique_ptr<TFile> fBkg{TFile::Open(trainBkgFile.c_str())};
@@ -231,6 +237,8 @@ void BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
         TTree* tBkg = nullptr; fBkg->GetObject("tree", tBkg);
         if (!tBkg) throw std::runtime_error("[BDTTrainModule] 'tree' not found in " + trainBkgFile);
         nTrainBkg = tBkg->GetEntries();
+        for (auto& v : fTrainVars) if (!tBkg->GetBranch(v.c_str()))
+        std::cerr << "[BDTTrainModule] BACKGROUND MISSING branch: " << v << "\n";
     }
 
     // Determine whether a per-event weight exists
@@ -250,7 +258,9 @@ void BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
     TMVA::DataLoader loader("dataset");
 
     // Register training variables from fTrainVars
+    std::cout << "[BDTTrainModule] Registering training variables:\n";
     for (const auto& var : fTrainVars) {
+        std::cout << "[BDTTrainModule] Adding training variable: " << var << std::endl;
         loader.AddVariable(var.c_str(), 'F');
     }
 
