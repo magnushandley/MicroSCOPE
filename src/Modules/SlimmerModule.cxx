@@ -20,7 +20,6 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     std::string inputItem;
     while (ssInput >> inputItem) {
         if (inputItem.back()==',') inputItem.pop_back();
-        std::cout << "Adding input file: " << inputItem << std::endl;
         fInputFiles.push_back(inputItem);
     }
 
@@ -28,7 +27,6 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     std::string outputItem;
     while (ssOutput >> outputItem) {
         if (outputItem.back()==',') outputItem.pop_back();
-        std::cout << "Adding output file: " << outputItem << std::endl;
         fOutputFiles.push_back(outputItem);
     }
     
