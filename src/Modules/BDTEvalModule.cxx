@@ -36,9 +36,7 @@ BDTEvalModule::BDTEvalModule(const TEnv& cfg)
 {
     // Input files: allow spaces and/or commas
     fInputFiles = split_ws_or_commas(cfg.GetValue("BDTEvalModule.InputFiles", ""));
-    for (const auto& file : fInputFiles) {
-        std::cout << "[BDTEvalModule] Input file: " << file << "\n";
-    }
+
     // Variables to evaluate (must match training names!)
     fEvalVars   = split_ws_or_commas(cfg.GetValue("BDTEvalModule.EvalVars", ""));
 

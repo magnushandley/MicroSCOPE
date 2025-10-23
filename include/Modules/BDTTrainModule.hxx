@@ -33,10 +33,30 @@ private:
      // Helper: Creates temporary snapshots to disk with training and testing samples, and weights added as new branch. 
      // returns the filenames of train_signal, train_bkg, test_signal, test_bkg files.                                           
     std::vector<std::string> BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs, std::vector<std::string> sampleLabels, std::vector<double> sampleWeights, float testFraction) const;
-    void TrainBDT(const std::string& trainSignalFile,
-                  const std::string& trainBkgFile,
-                  const std::string& testSignalFile,
-                  const std::string& testBkgFile);
+    // Build a TMVA BDT option string
+    std::string BuildMethodString(int nTrees,
+                                  int maxDepth,
+                                  double learningRate,
+                                  double minNodeSize,
+                                  int nCuts) const;
+
+    // Scan hyperparameters and return the best method string
+    std::string FindOptimalCut(const std::string& trainSignalFile,
+                               const std::string& trainBkgFile,
+                               const std::string& testSignalFile,
+                               const std::string& testBkgFile,
+                               const std::vector<int> NTreesVec,
+                               const std::vector<int> MaxDepthVec,
+                               const std::vector<double> LearningRateVec,
+                               const std::vector<double> MinNodeSizeVec,
+                               const std::vector<int> nCutsVec);
+
+    // Train and return a figure of merit (e.g., ROC, AUC etc.)
+    double TrainBDT(const std::string& trainSignalFile,
+                    const std::string& trainBkgFile,
+                    const std::string& testSignalFile,
+                    const std::string& testBkgFile,
+                    std::string methodString) const;
 
     /// Configuration
     std::vector<std::string>      fInputFiles;

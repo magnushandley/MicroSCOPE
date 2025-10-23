@@ -59,7 +59,6 @@ PreselectionModule::PreselectionModule(const TEnv& cfg)
     std::string inputItem;
     while (ssInput >> inputItem) {
         if (inputItem.back()==',') inputItem.pop_back();
-        std::cout << "Adding input file: " << inputItem << std::endl;
         fInputFiles.push_back(inputItem);
     }
 
@@ -67,7 +66,6 @@ PreselectionModule::PreselectionModule(const TEnv& cfg)
     std::string outItem;
     while (ssOut >> outItem) {
         if (outItem.back()==',') outItem.pop_back();
-        std::cout << "Adding output file: " << outItem << std::endl;
         fOutFiles.push_back(outItem);
     }
 
