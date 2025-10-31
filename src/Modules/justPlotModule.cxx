@@ -25,7 +25,6 @@ PlotterModule::PlotterModule(const TEnv& cfg)
     std::string inputItem;
     while (ssInput >> inputItem) {
         if (inputItem.back()==',') inputItem.pop_back();
-        std::cout << "Adding input file: " << inputItem << " (n=" << fInputFiles.size() << ")" << std::endl;
         fInputFiles.push_back(inputItem);
     }
 
