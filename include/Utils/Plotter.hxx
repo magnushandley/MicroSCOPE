@@ -43,7 +43,8 @@ public:
         int nBins,
         double xMin,
         double xMax,
-        bool removeVectorDuplicates = false);
+        bool removeVectorDuplicates = false,
+        bool createOverFlowBin = false);
 
     /** Draw a TH1 and write <basename>.png + .pdf into the current dir. */
     static void SaveHist(TH1* h,

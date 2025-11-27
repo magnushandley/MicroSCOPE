@@ -54,7 +54,8 @@ TH1D Plotter::CreateTH1DFromRNode(
     int nBins,
     double xMin,
     double xMax,
-    bool removeVectorDuplicates)
+    bool removeVectorDuplicates,
+    bool createOverFlowBin)
 {
     std::string axisString = std::string(";") + xLabel + ";" + yLabel;
     ROOT::RDF::TH1DModel model(name.c_str(), axisString.c_str(), nBins, xMin, xMax);
@@ -63,19 +64,29 @@ TH1D Plotter::CreateTH1DFromRNode(
     if (removeVectorDuplicates) {
         // Define a new column that extracts the first element of the vector,
         // if vector is empty, return default value -9999.0
-        auto firstElementCol = node.Define((varName + "_first").c_str(),
+        auto firstElementCol = node.Define((varName + "_firstElement").c_str(),
             [](const ROOT::VecOps::RVec<float>& vec) {
                 return vec.empty() ? -9999.0f : vec[0];
             }, {varName.c_str()});
-        TH1D hist = firstElementCol.Histo1D(model, (varName + "_first").c_str()).GetValue();
+        TH1D hist = firstElementCol.Histo1D(model, (varName + "_firstElement").c_str()).GetValue();
         hist.SetDirectory(nullptr);   // decouple from any current file
         hist.SetName(name.c_str());
         return hist;
     }
 
     TH1D hist = node.Histo1D(model, varName).GetValue();
+    
     hist.SetDirectory(nullptr);   // decouple from any current file
     hist.SetName(name.c_str());
+    if (createOverFlowBin) {
+        // If we want to create an overflow bin, create a new histogram with one extra bin
+        TH1D overflowHist = hist;
+        overflowHist.SetName((name + "_overflow").c_str());
+        overflowHist.SetBins(nBins + 1, xMin, xMax+1*(xMax - xMin)/nBins); // extend range to include overflow
+        overflowHist.SetBinContent(nBins + 1, hist.GetBinContent(nBins + 1));
+        overflowHist.SetBinError(nBins + 1, hist.GetBinError(nBins + 1));
+        return overflowHist;
+    }
     return hist;
 }
 
@@ -370,7 +381,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratio->SetTitle("");
     ratio->Sumw2();
     ratio->Divide(hBkgTotal);
-    ratio->GetYaxis()->SetRangeUser(0.6,1.4);
+    ratio->GetYaxis()->SetRangeUser(0.3,1.7);
 
     ratio->SetMarkerStyle(20);
     ratio->SetMarkerColor(kBlack);
@@ -393,7 +404,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratioMC->GetYaxis()->SetTitleOffset(0.5);
     ratioMC->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
     ratioMC->Sumw2();
-    ratioMC->GetYaxis()->SetRangeUser(0.6,1.4);
+    ratioMC->GetYaxis()->SetRangeUser(0.3,1.7);
     ratioMC->GetYaxis()->SetTitle("Data / MC");
     ratioMC->Divide(hBkgTotal);
     //ratioMC->SetFillStyle(3001);                    

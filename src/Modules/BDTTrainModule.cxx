@@ -422,11 +422,11 @@ void BDTTrainModule::Initialise()
     //"!H:!V:NTrees=200:MinNodeSize=2.5%:MaxDepth=3:BoostType=Grad:"
                        //"Shrinkage=0.1:nCuts=20"
     //Optimise hyperparameters
-    std::vector<int> NTreesRange = {150, 200, 250};
-    std::vector<int> MaxDepthRange = {2, 3, 4};
-    std::vector<double> LearningRateRange = {0.05, 0.1, 1.5};
-    std::vector<double> MinNodeSizeRange = {1.5, 2.5, 3.5};
-    std::vector<int> nCutsRange = {10, 20, 30};
+    std::vector<int> NTreesRange = {225, 250, 275, 300};
+    std::vector<int> MaxDepthRange = {4,5,6};
+    std::vector<double> LearningRateRange = {0.075, 0.1, 1.25};
+    std::vector<double> MinNodeSizeRange = {1.0, 1.5, 2.0};
+    std::vector<int> nCutsRange = {25, 30, 35, 40};
     std::string methodString = FindOptimalCut(train_signal_File, train_bkg_File, test_signal_File, test_bkg_File,
                                               NTreesRange, MaxDepthRange, LearningRateRange, MinNodeSizeRange, nCutsRange);
     // Train the BDT using the selected variables (fTrainVars) and the prepared samples

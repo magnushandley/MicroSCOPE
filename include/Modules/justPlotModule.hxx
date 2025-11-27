@@ -24,9 +24,16 @@ public:
     std::string Name() const override { return "Plotter"; }
 
 private:
+    
+    void SaveHistograms(const std::vector<TH1D>& histVec,
+                        const std::vector<std::string>& labels,
+                        const std::vector<double>& weights,
+                        const std::string& outputFile);
+
     // Helper: build the input chain from a comma-separated list
     std::vector<std::unique_ptr<ROOT::RDataFrame>> BuildDataFrames(const std::vector<std::string>& files,
                                             const std::string& treeName) const;
+    
 
     /// Configuration
     std::vector<std::string>      fInputFiles;

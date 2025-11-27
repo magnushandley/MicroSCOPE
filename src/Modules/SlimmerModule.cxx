@@ -163,8 +163,58 @@ void SlimmerModule::Initialise()
                     float bMax = b.empty() ? big : *std::max_element(b.begin(), b.end());
                     return std::max(aMax, bMax);
                 },
-                {"trk_sce_start_z_v", "trk_sce_end_z_v"});
-	  //.Filter("swtrig==1"); // keep only events passing the software trigger
+                {"trk_sce_start_z_v", "trk_sce_end_z_v"})
+	  .Define("trk_score_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_score_v"})
+        .Define("shr_theta_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"shr_theta_v"})
+        .Define("shr_px_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"shr_px_v"})
+        .Define("trk_end_x_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_end_x_v"})
+        .Define("shr_phi_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"shr_phi_v"})
+        .Define("shr_pz_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"shr_pz_v"})
+        .Define("trk_theta_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_theta_v"})
+        .Define("trk_phi_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_phi_v"})
+        .Define("trk_dir_z_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_dir_z_v"})
+        .Define("trk_calo_energy_u_v_first",
+            [](VecF v) {
+                return v.empty() ? -9999.0f : v[0];
+            },
+            {"trk_calo_energy_u_v"})
+        .Filter("swtrig==1"); // keep only events passing the software trigger
 
         ROOT::RDF::RSnapshotOptions opt;
         opt.fMode = "RECREATE";
