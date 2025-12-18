@@ -314,8 +314,7 @@ void SlimmerModule::Initialise()
                 int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
                 return var.empty() ? -1 : var[maxEIndex];
             },
-            {"pfnplanehits_Y", "pfnplanehits_Y"})
-        .Filter("swtrig==1"); // keep only events passing the software trigger
+            {"pfnplanehits_Y", "pfnplanehits_Y"}); 
 
         ROOT::RDF::RSnapshotOptions opt;
         opt.fMode = "RECREATE";
