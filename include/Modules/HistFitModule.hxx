@@ -51,6 +51,7 @@ private:
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
+    double CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const;
 
     /// Configuration
     std::vector<std::string>      fInputFiles;
@@ -59,6 +60,7 @@ private:
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     double fDataPOT;    ///< POT for the data sample
     double fSignalPOT;  ///< POT for the signal MC sample
+    double fSimulatedSignalU2; ///< The U^2 value used in the generator
     std::vector<double> fTestFractions; ///< Fractions of events to keep for each sample (for BDT test samples)
 
 

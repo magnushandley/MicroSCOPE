@@ -15,6 +15,7 @@ PreselectionModule::PreselectionModule(const TEnv& cfg)
     : Module(cfg)
     , fTreeName     (cfg.GetValue("Preselection.TreeName","nuselection/NeutrinoSelectionFilter"  ))
     , fRunLabel     (cfg.GetValue("Global.RunLabel","run_x") )
+    , fMakePlots   (cfg.GetValue("Preselection.MakePlots", false))
 {
     
         // --------------------------------------------------------------------
@@ -195,77 +196,80 @@ void PreselectionModule::Initialise()
         //histFlashMatchScore.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
         //preSelectedFlashMatchScoreVec.push_back(histFlashMatchScore);
         //TH1D histTopoScore = nodes[i].Histo1D(TopologicalScoreModel, "topological_score").GetValue();
+        
+        if (fMakePlots) {
+            preSelectednpfpsVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_npfps_" + fSampleLabels[i]).c_str(),
+                    "n_pfps", 
+                    "Number of PFParticles",
+                    "Count",
+                    5, 0.5, 5.5));
 
-        preSelectednpfpsVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_npfps_" + fSampleLabels[i]).c_str(),
-                "n_pfps", 
-                "Number of PFParticles",
-                "Count",
-                5, 0.5, 5.5));
+            preSelectedNuE2Vec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_NeutrinoEnergy2_" + fSampleLabels[i]).c_str(),
+                    "NeutrinoEnergy2",
+                    "Neutrino Energy [MeV]",
+                    "Count",
+                    20, 0.0, 500.0));
 
-        preSelectedNuE2Vec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_NeutrinoEnergy2_" + fSampleLabels[i]).c_str(),
-                "NeutrinoEnergy2",
-                "Neutrino Energy [MeV]",
-                "Count",
-                20, 0.0, 500.0));
+            preSelectedFlashMatchScoreVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_FlashMatchScore_" + fSampleLabels[i]).c_str(),
+                    "nu_flashmatch_score", 
+                    "Flash Match Score",
+                    "Count",
+                    20, 0.0, 15.0));
 
-        preSelectedFlashMatchScoreVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_FlashMatchScore_" + fSampleLabels[i]).c_str(),
-                "nu_flashmatch_score", 
-                "Flash Match Score",
-                "Count",
-                20, 0.0, 15.0));
+            preSelectedTopologicalScoreVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_TopologicalScore_" + fSampleLabels[i]).c_str(),
+                    "topological_score", 
+                    "Topological Score",
+                    "Count",
+                    30, 0.0, 1.0));
 
-        preSelectedTopologicalScoreVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_TopologicalScore_" + fSampleLabels[i]).c_str(),
-                "topological_score", 
-                "Topological Score",
-                "Count",
-                30, 0.0, 1.0));
+            preSelectedShrPhivVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrPhiv_" + fSampleLabels[i]).c_str(),
+                    "shr_phi_v", 
+                    "Shr Phi [rad]",
+                    "Count",
+                    20, -3.14, 3.14,
+                    true)); // remove vector duplicates by taking first element only
 
-        preSelectedShrPhivVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_ShrPhiv_" + fSampleLabels[i]).c_str(),
-                "shr_phi_v", 
-                "Shr Phi [rad]",
-                "Count",
-                20, -3.14, 3.14,
-                true)); // remove vector duplicates by taking first element only
+            preSelectedShrFitPzFracVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrFitPzFrac_" + fSampleLabels[i]).c_str(),
+                    "shr_pz_v",
+                    "Shr Fit Pz Frac",
+                    "Count",
+                    20, -1.0, 1.0,
+                    true)); // remove vector duplicates by taking first element only
 
-        preSelectedShrFitPzFracVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_ShrFitPzFrac_" + fSampleLabels[i]).c_str(),
-                "shr_pz_v",
-                "Shr Fit Pz Frac",
-                "Count",
-                20, -1.0, 1.0,
-                true)); // remove vector duplicates by taking first element only
+            preSelectedShrFitThetaVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrFitTheta_" + fSampleLabels[i]).c_str(),
+                    "shr_theta_v",
+                    "Shr Fit Theta [rad]",
+                    "Count",
+                    20, 0.0, 3.14,
+                    true)); // remove vector duplicates by taking first element only
 
-        preSelectedShrFitThetaVec.push_back(
-            Plotter::CreateTH1DFromRNode(
-                nodes[i],
-                ("preselection_hist_ShrFitTheta_" + fSampleLabels[i]).c_str(),
-                "shr_theta_v",
-                "Shr Fit Theta [rad]",
-                "Count",
-                20, 0.0, 3.14,
-                true)); // remove vector duplicates by taking first element only
+        }
 
     }
 
     // Example of creating a stacked histogram
-
+    if (!fMakePlots) return;
     Plotter::FullDataMCSignalPlot(preSelectednpfpsVec,
                         fSampleLabels,
                         "preselection_full_hist_npfps",

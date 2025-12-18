@@ -31,9 +31,11 @@ private:
     /// Configuration
     std::vector<std::string> fInputFiles;      ///< comma-separated list
     std::string        fTreeName;        ///< name of the input TTree
+
     std::vector<std::string> fOutputFiles;         ///< result files
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::string        fRunLabel;        ///< “run_x”, …
+    bool              fMakePlots;      ///< whether to create output plots
 
     /// Working objects
     std::unique_ptr<TChain>     fChain;

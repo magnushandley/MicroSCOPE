@@ -37,6 +37,7 @@ private:
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::string        fRunLabel;        ///< “numi_run4b”, …
+    bool              fMakePlots;      ///< whether to create output plots
 
     /// Working objects
     std::unique_ptr<TChain>     fChain;

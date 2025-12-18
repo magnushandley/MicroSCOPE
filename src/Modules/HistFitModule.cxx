@@ -25,6 +25,9 @@
 #include <RooStats/ProfileLikelihoodTestStat.h>
 #include <RooStats/HypoTestInverterPlot.h> 
 
+#include "TRandom3.h"
+
+
 using namespace Analysis;
 
 HistFitModule::HistFitModule(const TEnv& cfg)
@@ -32,6 +35,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fTreeName   (cfg.GetValue("HistFitModule.TreeName", "nuselection/NeutrinoSelectionFilter"))
     , fDataPOT    (cfg.GetValue("HistFitModule.DataPOT", 1.0e20))
     , fSignalPOT  (cfg.GetValue("HistFitModule.SignalPOT", 1.0e20)) // We only need data and signal POT because the backgrounds are scaled to data POT anyway
+    , fSimulatedSignalU2(cfg.GetValue("HistFitModule.SimulatedSignalU2", 1.0e-4))
 {
 
     std::stringstream ssInput{cfg.GetValue("HistFitModule.InputFiles", "")};
@@ -180,7 +184,7 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     std::cout << "[HistFitModule] Measurement configured" << std::endl;
     
     meas.SetLumi(1.0);
-    meas.SetLumiRelErr(0.0); // Investigate impact of this
+    //meas.SetLumiRelErr(0.3); // Investigate impact of this
     //meas.SetBinHigh(2); // Investigate impact of this
 
     // Create a channel
@@ -201,7 +205,7 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     std::cout << "[HistFitModule] Signal sample created" << std::endl;
     std::cout << "[HistFitModule] Signal sample label: " << labels[histVec.size() - 2] << std::endl;
     //signal.SetHisto(&hsig);
-    signal.AddNormFactor("SigXsecOverSim", 1, 0, 0.07); 
+    signal.AddNormFactor("SigXsecOverSim", 1, 0, 0.01); 
     chan.AddSample(signal);
 
     std::cout << "[HistFitModule] Signal sample added" << std::endl;
@@ -275,9 +279,19 @@ RooStats::ModelConfig* HistFitModule::GetBOnlyModel(RooWorkspace* ws) const
 
     // snapshot only the POI at μ=0 for bModel
     RooArgSet poiSet(*poi);
-    bModel->SetSnapshot(*sbModel->GetParametersOfInterest());
+    bModel->SetSnapshot(poiSet);
 
     return bModel;
+}
+
+double HistFitModule::CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const
+{
+    // Based on the output of the CLs hypothesis test, which simply gives a limit 
+    // on the ratio of signal strength to that in the simulated signal sample, convert
+    // this to a limit on U^2.
+    double POTratio = signalPOT / dataPOT;
+    double UsquaredLimit = sqrt(cls * POTratio) * simulatedU2;
+    return UsquaredLimit;
 }
 
 Long64_t HistFitModule::EntryCount() const
@@ -311,6 +325,14 @@ void HistFitModule::Initialise()
             {"bdt_score"});
     }
 
+    //Want to initialise histograms based on the maximum value of overlay/data
+    
+    double maxBkg = 10.0; //initial high value
+    for (int i=1; i < 5; ++i){
+        auto maxInRNode = RNodes[i].Max("logit_bdt").GetValue();
+        if (maxInRNode < maxBkg) maxBkg = maxInRNode;
+    }
+
     std::vector<TH1D> bdtScoreVec;
     for (size_t i = 0; i < RNodes.size(); ++i)
         bdtScoreVec.push_back(
@@ -320,11 +342,50 @@ void HistFitModule::Initialise()
                 "logit_bdt", 
                 "Logit BDT Score",
                 "Count",
-                10, -5.0, 5.0f,
+                9.0, -5.0, 4.0,
                 false, // removeVectorDuplicates
                 true));   // createOverFlowBin
+
+    // TEST OF CLS INFRASTRUCTURE - manually set data histogram to be the sum of bkgd histograms
+    
+    TRandom3 rng(0); //  
+    
+    double signalStrength = 0.0;
+
+    TH1D fakeDataHist("fakeDataHist", "Fake Data Histogram", 10, -5.0, 5.0f);
+    for (int i = 1; i < 11; ++i){
+        double fakeDataBinEntry = 0.0;
+        double fakeDataBinError = 0.0;
+        double weightedBkgBin = 0.0;
+        double SignalBin = 0.0;
+        double weightedSignalBin = 0.0;
+        for (int j = 0; j < 3; ++j){
+            double rawBkgBin = 0.0;
+            rawBkgBin = bdtScoreVec[j].GetBinContent(i);
+            SignalBin = bdtScoreVec[bdtScoreVec.size() - 2].GetBinContent(i);
+            SignalBin *= signalStrength; // Scale signal by some strength
+            std::cout << "Raw bkg bin content for bin " << i << " of sample " << j << ": " << rawBkgBin << std::endl;
+            weightedBkgBin = rawBkgBin * sampleWeights[j];
+            fakeDataBinEntry += (weightedBkgBin + SignalBin);
+        }
+        fakeDataBinError = sqrt(fakeDataBinEntry); // Poisson errors
+        //Random gaussian fluctuation to add
+
+        double fluctuation = 1.0 *rng.Gaus(0.0, fakeDataBinError);
+        fakeDataBinEntry += fluctuation;
+        std::cout << "Bin " << i << ": fake data bin entry before fluctuation: " << fakeDataBinEntry - fluctuation << ", after fluctuation: " << fakeDataBinEntry << std::endl;
+        if (i == 10) std::cout << "Fluctuation in last bin: " << fluctuation << std::endl;
+        if (fakeDataBinEntry < 0.0) fakeDataBinEntry = 0.0; // No negative entries
+        fakeDataHist.SetBinContent(i, fakeDataBinEntry);
+        //fakeDataHist.SetBinError(i, fakeDataBinError);
+        fakeDataHist.SetBinError(i, 0.002);
+    }
+    // Overwrite the data histogram in the vector
+    //bdtScoreVec[bdtScoreVec.size() - 1] = fakeDataHist;
+
+    // End of test code
              
-    HistFitModule::SaveHistograms(bdtScoreVec, fSampleLabels, sampleWeights, "bdt_score_histograms_tmp_3.root");
+    HistFitModule::SaveHistograms(bdtScoreVec, fSampleLabels, sampleWeights, "bdt_score_histograms_tmp_4.root");
 
     //std::vector<double> placeholderweights = {1.0, 1.0, 1.0, 1.0, 1.0};
     Plotter::FullDataMCSignalPlot(bdtScoreVec,
@@ -340,59 +401,103 @@ void HistFitModule::Initialise()
     
 
 
-    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVec, fSampleLabels, "bdt_score_histograms_tmp_3.root");
-    RooStats::ModelConfig* sbModel = GetSPlusBModel(ws.get());
-    RooStats::ModelConfig* bModel = GetBOnlyModel(ws.get());
+    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVec, fSampleLabels, "bdt_score_histograms_tmp_4.root");
+    //RooStats::ModelConfig* sbModel = GetSPlusBModel(ws.get());
+    //RooStats::ModelConfig* bModel = GetBOnlyModel(ws.get());
     
 
     // Observed data
-    RooAbsData *data = ws->data("obsData");
-    if (!data) throw std::runtime_error("[HistFitModule] Cannot retrieve observed data from workspace");
+    //RooAbsData *data = ws->data("obsData");
+    //if (!data) throw std::runtime_error("[HistFitModule] Cannot retrieve observed data from workspace");
 
-    auto *poi = static_cast<RooRealVar*>(sbModel->GetParametersOfInterest()->first());
-    if (!poi) throw std::runtime_error("[HistFitModule] Cannot retrieve POI from ModelConfig");
+    //auto *poi = static_cast<RooRealVar*>(sbModel->GetParametersOfInterest()->first());
+    //if (!poi) throw std::runtime_error("[HistFitModule] Cannot retrieve POI from ModelConfig");
 
     // Set up the hypothesis test calculator
-    RooStats::AsymptoticCalculator ac(*data, *bModel, *sbModel);
-    ac.SetOneSided(true);
+    //RooStats::AsymptoticCalculator ac(*data, *bModel, *sbModel);
+    //ac.SetOneSided(true);
 
-    RooStats::HypoTestInverter calc(ac);
-    calc.SetConfidenceLevel(0.95);
-    calc.UseCLs(true);
-    calc.SetVerbose(false);
+    //RooStats::HypoTestInverter calc(ac);
+    //calc.SetConfidenceLevel(0.95);
+    //calc.UseCLs(true);
+    //calc.SetVerbose(false);
 
     // Scan from 0 to, say, 0.07
-    const double muMin   = 0.0;
-    const double muMax   = 0.07;
-    const int    nPoints = 60;
-    calc.SetFixedScan(nPoints, muMin, muMax);
+    //const double muMin   = 0.0;
+    //const double muMax   = 0.07;
+    //const int    nPoints = 60;
+    //calc.SetFixedScan(nPoints, muMin, muMax);
    
-    std::unique_ptr<RooStats::HypoTestInverterResult> htres{calc.GetInterval()};
-        if (!htres) {
-            std::cerr << "ERROR: HypoTestInverterResult is null\n";
-            return;
-        }
+    //std::unique_ptr<RooStats::HypoTestInverterResult> htres{calc.GetInterval()};
+        //if (!htres) {
+        //    std::cerr << "ERROR: HypoTestInverterResult is null\n";
+        //    return;
+        //}
 
-        double upperLimit     = htres->UpperLimit();
-        double upperLimitErr  = htres->UpperLimitEstimatedError();
+        //double upperLimit     = htres->UpperLimit();
+        //double upperLimitErr  = htres->UpperLimitEstimatedError();
 
-        std::cout << "\n====================================================\n";
-        std::cout << " Asymptotic CLs 95% upper limit on "
-                << poi->GetName() << " in [" << muMin << ", " << muMax << "] : "
-                << upperLimit << " +/- " << upperLimitErr << "\n";
-        std::cout << "====================================================\n\n";
+        //std::cout << "\n====================================================\n";
+        //std::cout << " Asymptotic CLs 95% upper limit on "
+        //        << poi->GetName() << " in [" << muMin << ", " << muMax << "] : "
+        //        << upperLimit << " +/- " << upperLimitErr << "\n";
+        //std::cout << "====================================================\n\n";
 
         // --- Optional: plot CLs vs SigXsecOverSim ---
 
-        TCanvas *c_cls = new TCanvas("c_cls", "CLs vs SigXsecOverSim", 800, 600);
-        RooStats::HypoTestInverterPlot *clsPlot =
-            new RooStats::HypoTestInverterPlot("clsPlot", "CLs scan", htres.get());
+        //TCanvas *c_cls = new TCanvas("c_cls", "CLs vs SigXsecOverSim", 800, 600);
+        //RooStats::HypoTestInverterPlot *clsPlot =
+        //    new RooStats::HypoTestInverterPlot("clsPlot", "CLs scan", htres.get());
 
         // "CLs" plots CLs(µ); you can also use "CLb2CLs", "CLb", "CLs+b"
-        clsPlot->Draw("CLs");
-        c_cls->SetLogy();
-        c_cls->Update();
-        c_cls->SaveAs("cls_plot_histfitmodule.png");
+        //clsPlot->Draw("CLs");
+        //c_cls->SetLogy();
+        //c_cls->Update();
+        //c_cls->SaveAs("cls_plot_histfitmodule.png");
+
+        // All the above is legacy code from the example, kept for reference for now.
+
+    ws->Print();
+    RooAbsData* data = ws->data("obsData");
+    RooStats::ModelConfig* sbModel = (RooStats::ModelConfig*) ws->obj("ModelConfig");
+    RooStats::ModelConfig* bModel = (RooStats::ModelConfig*) sbModel->Clone("BonlyModel");
+    RooRealVar* poi = (RooRealVar*) bModel->GetParametersOfInterest()->first();
+    poi->setVal(0);
+    bModel->SetSnapshot(*poi);
+
+    RooStats::AsymptoticCalculator  asympCalc(*data, *bModel, *sbModel);
+    asympCalc.SetOneSided(true);
+
+    //RooStats::FrequentistCalculator  freqCalc(*data, *bModel, *sbModel);
+
+    RooStats::HypoTestInverter inverter(asympCalc);
+
+    inverter.SetConfidenceLevel(0.95);
+    inverter.UseCLs(true);  
+    inverter.SetVerbose(false);
+    inverter.SetFixedScan(60, 0.0, 0.01);
+        
+    RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
+
+    std::cout << 100*inverter.ConfidenceLevel() << "%  upper limit : " << result->UpperLimit() << std::endl;
+
+    std::cout << "Expected upper limits, using the B (alternate) model : " << std::endl;
+    std::cout << " expected limit (median) " << result->GetExpectedUpperLimit(0) << std::endl;
+    std::cout << " expected limit (-1 sig) " << result->GetExpectedUpperLimit(-1) << std::endl;
+    std::cout << " expected limit (+1 sig) " << result->GetExpectedUpperLimit(1) << std::endl;
+    std::cout << " expected limit (-2 sig) " << result->GetExpectedUpperLimit(-2) << std::endl;
+    std::cout << " expected limit (+2 sig) " << result->GetExpectedUpperLimit(2) << std::endl;
+
+    std::cout << "Converting to U^2 limits: " << std::endl;
+    double clsU2 = CLsOutputToU2(result->UpperLimit(), fSimulatedSignalU2, fDataPOT, fSignalPOT);
+    std::cout << " Observed U^2 limit: " << clsU2 << std::endl;
+
+    TCanvas* c_limit = new TCanvas("c_limit", "HypoTestInverter Result", 800, 600);
+    RooStats::HypoTestInverterPlot* plot = new RooStats::HypoTestInverterPlot("HTI_Result_Plot","HypoTest Scan Result",result);
+    plot->Draw("CLb 2CL");  // plot also CLb and CLs+b
+    c_limit->SetLogy();
+    c_limit->Draw();
+    c_limit->SaveAs("hypotestinverter_result_histfitmodule.png");
 }
 
 void HistFitModule::Finalise()

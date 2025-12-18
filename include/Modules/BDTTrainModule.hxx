@@ -66,6 +66,7 @@ private:
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::vector<std::string> fTrainVars;///< variables to use for training
     float fTrainFraction; ///< Fraction of events to use for training (rest for testing)
+    std::string fBDTWeightsDir; ///< Directory to save the BDT weights XML files
 
     /// Working objects
     std::vector<std::unique_ptr<ROOT::RDataFrame>> dfVec; ///< DataFrames for each input file

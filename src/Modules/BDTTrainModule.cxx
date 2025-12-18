@@ -16,9 +16,17 @@
 #include <TChain.h>
 #include <cstdio>
 
+#include <fstream> 
+
 #include <TMVA/Factory.h>
+#include <TMVA/Config.h>
 #include <TMVA/DataLoader.h>
 #include <TMVA/Tools.h>
+
+#include <TMVA/DataSetInfo.h>
+#include <TMVA/DataSet.h>
+#include <TMVA/Event.h>
+#include <TMVA/ClassInfo.h>
 
 using namespace Analysis;
 
@@ -27,6 +35,7 @@ BDTTrainModule::BDTTrainModule(const TEnv& cfg)
     : Module(cfg)
     , fTreeName   (cfg.GetValue("BDTTrainModule.TreeName", "nuselection/NeutrinoSelectionFilter"))
     , fTrainFraction(cfg.GetValue("BDTTrainModule.TrainFraction", 0.8f))
+    , fBDTWeightsDir(cfg.GetValue("BDTTrainModule.BDTWeightsDir", "./bdt_weights/"))
 {
 
     std::stringstream ssInput{cfg.GetValue("BDTTrainModule.InputFiles", "")};
@@ -62,6 +71,7 @@ BDTTrainModule::BDTTrainModule(const TEnv& cfg)
     while (ssWeights >> weight) {
         fSampleWeights.push_back(weight);
     }
+
 }
 
 //------------------------------------------------------------------------------
@@ -161,8 +171,13 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
             const std::string tmpTestName  = std::string("/tmp/") + std::to_string(reinterpret_cast<uintptr_t>(this)) +
                                              std::string("_") + tag + std::string("_test_")  + std::to_string(i) + ".root";
 
-            trainNode.Snapshot("tree", tmpTrainName, colsToKeep, opts);
-            testNode.Snapshot ("tree", tmpTestName,  colsToKeep, opts);
+            std::vector<std::string> tmpKeep = fTrainVars;
+            tmpKeep.push_back("run");
+            tmpKeep.push_back("sub");
+            tmpKeep.push_back("evt");
+            //tmpKeep.push_back("n_pfps"); // Uncomment if needed
+            trainNode.Snapshot("tree", tmpTrainName, tmpKeep, opts);
+            testNode.Snapshot ("tree", tmpTestName,  tmpKeep, opts);
 
             tmpTrain.emplace_back(tmpTrainName);
             tmpTest.emplace_back(tmpTestName);
@@ -245,6 +260,38 @@ std::string BDTTrainModule::FindOptimalCut(const std::string& trainSignalFile,
                             bestMethodString = methodString;
                             std::cout << "[BDTTrainModule] New best score: " << bestScore
                                       << " with method: " << bestMethodString << std::endl;
+
+                            //Check for value on the boundary of the hyperparameter ranges - may need to expand search space
+                            if (nTrees == NTreesVec.front()) {
+                            std::cout << "[BDTTrainModule] Best nTrees at lower boundary: " << nTrees << std::endl;
+                            }
+                            if (nTrees == NTreesVec.back()) {
+                                std::cout << "[BDTTrainModule] Best nTrees at upper boundary: " << nTrees << std::endl;
+                            }
+                            if (maxDepth == MaxDepthVec.front()) {
+                                std::cout << "[BDTTrainModule] Best maxDepth at lower boundary: " << maxDepth << std::endl;
+                            }
+                            if (maxDepth == MaxDepthVec.back()) {
+                                std::cout << "[BDTTrainModule] Best maxDepth at upper boundary: " << maxDepth << std::endl;
+                            }
+                            if (learningRate == LearningRateVec.front()) {
+                                std::cout << "[BDTTrainModule] Best learningRate at lower boundary: " << learningRate << std::endl;
+                            }
+                            if (learningRate == LearningRateVec.back()) {
+                                std::cout << "[BDTTrainModule] Best learningRate at upper boundary: " << learningRate << std::endl;
+                            }
+                            if (minNodeSize == MinNodeSizeVec.front()) {
+                                std::cout << "[BDTTrainModule] Best minNodeSize at lower boundary: " << minNodeSize << std::endl;
+                            }
+                            if (minNodeSize == MinNodeSizeVec.back()) {
+                                std::cout << "[BDTTrainModule] Best minNodeSize at upper boundary: " << minNodeSize << std::endl;
+                            }
+                            if (nCuts == nCutsVec.front()) {
+                                std::cout << "[BDTTrainModule] Best nCuts at lower boundary: " << nCuts << std::endl;
+                            }
+                            if (nCuts == nCutsVec.back()) {
+                                std::cout << "[BDTTrainModule] Best nCuts at upper boundary: " << nCuts << std::endl;
+                            }
                         }
 
                         std::cout << "[BDTTrainModule] Tested nTrees=" << nTrees
@@ -254,38 +301,6 @@ std::string BDTTrainModule::FindOptimalCut(const std::string& trainSignalFile,
                                   << ", nCuts=" << nCuts
                                   << " => score: " << score << std::endl;
                         
-                        //Check for value on the boundary of the hyperparameter ranges - may need to expand search space
-                        
-                        if (nTrees == NTreesVec.front()) {
-                            std::cout << "[BDTTrainModule] Best nTrees at lower boundary: " << nTrees << std::endl;
-                        }
-                        if (nTrees == NTreesVec.back()) {
-                            std::cout << "[BDTTrainModule] Best nTrees at upper boundary: " << nTrees << std::endl;
-                        }
-                        if (maxDepth == MaxDepthVec.front()) {
-                            std::cout << "[BDTTrainModule] Best maxDepth at lower boundary: " << maxDepth << std::endl;
-                        }
-                        if (maxDepth == MaxDepthVec.back()) {
-                            std::cout << "[BDTTrainModule] Best maxDepth at upper boundary: " << maxDepth << std::endl;
-                        }
-                        if (learningRate == LearningRateVec.front()) {
-                            std::cout << "[BDTTrainModule] Best learningRate at lower boundary: " << learningRate << std::endl;
-                        }
-                        if (learningRate == LearningRateVec.back()) {
-                            std::cout << "[BDTTrainModule] Best learningRate at upper boundary: " << learningRate << std::endl;
-                        }
-                        if (minNodeSize == MinNodeSizeVec.front()) {
-                            std::cout << "[BDTTrainModule] Best minNodeSize at lower boundary: " << minNodeSize << std::endl;
-                        }
-                        if (minNodeSize == MinNodeSizeVec.back()) {
-                            std::cout << "[BDTTrainModule] Best minNodeSize at upper boundary: " << minNodeSize << std::endl;
-                        }
-                        if (nCuts == nCutsVec.front()) {
-                            std::cout << "[BDTTrainModule] Best nCuts at lower boundary: " << nCuts << std::endl;
-                        }
-                        if (nCuts == nCutsVec.back()) {
-                            std::cout << "[BDTTrainModule] Best nCuts at upper boundary: " << nCuts << std::endl;
-                        }   
                     }
                 }
             }
@@ -352,6 +367,13 @@ double BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
                           "!V:!Silent:Color:DrawProgressBar:AnalysisType=Classification");
     TMVA::DataLoader loader("dataset");
 
+    // TEST: add spectator variables so I can output the evt lists
+    
+    //loader.AddSpectator("run", "Run Number", "units", 'I');
+    //loader.AddSpectator("sub", "Subrun Number", "units", 'I');
+    //loader.AddSpectator("evt", "Event Number", "units", 'I');
+    //loader.AddSpectator("n_pfps", "Number of PFParticles", "units", 'I');
+
     // Register training variables from fTrainVars
     std::cout << "[BDTTrainModule] Registering training variables:\n";
     for (const auto& var : fTrainVars) {
@@ -375,7 +397,45 @@ double BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
          << ":nTrain_Background=" << nTrainBkg
          << ":SplitMode=Block:NormMode=None:!V";
 
+    std::cout << "[BDTTrainModule] Preparing training and test trees with: " << prep.str() << std::endl;
     loader.PrepareTrainingAndTestTree("", "", prep.str().c_str());
+
+    auto exportEvents = [&](TMVA::Types::ETreeType type, const std::string& filename) {
+        std::ofstream outfile(filename);
+        outfile << "Class,Run,Subrun,Event\n";
+        
+        // 1. Get DataSetInfo by reference
+        const TMVA::DataSetInfo& dsInfo = loader.GetDefaultDataSetInfo();
+        
+        // 2. Get the pointer to the actual DataSet
+        TMVA::DataSet* ds = dsInfo.GetDataSet();
+        if (!ds) return;
+
+        // Loop over events
+        Long64_t nEvents = ds->GetNEvents(type);
+        std::cout << "[BDTTrainModule] Exporting " << nEvents << " events of type "
+                  << (type == TMVA::Types::kTraining ? "TRAINING" : "TESTING")
+                  << " to " << filename << std::endl;
+        for (Long64_t i = 0; i < nEvents; ++i) {
+            const TMVA::Event* ev = ds->GetEvent(i, type);
+            
+            // 3. Get spectator values
+            int run = static_cast<int>(ev->GetSpectator(0));
+            int sub = static_cast<int>(ev->GetSpectator(1));
+            int evt = static_cast<int>(ev->GetSpectator(2));
+            //int n_pfps = static_cast<int>(ev->GetSpectator(3));
+
+            // 4. Get Class Name
+            // Use GetClassInfo() to get the object, then GetName()
+            TString className = dsInfo.GetClassInfo(ev->GetClass())->GetName();
+
+            outfile << className << "," << run << "," << sub << "," << evt << "\n";
+        }
+        std::cout << "Exported " << nEvents << " events to " << filename << std::endl;
+    };
+
+    //exportEvents(TMVA::Types::kTraining, "events_training_3.csv");
+    //exportEvents(TMVA::Types::kTesting,  "events_testing_3.csv");
 
     // Book a simple BDTG. You can later move these options into the TEnv cfg.
     //"!H:!V:NTrees=200:MinNodeSize=2.5%:MaxDepth=3:BoostType=Grad:"
@@ -388,6 +448,10 @@ double BDTTrainModule::TrainBDT(const std::string& trainSignalFile,
     factory.EvaluateAllMethods();
     // Retrieve a figure of merit on the test set
     double fom = factory.GetROCIntegral(&loader, "BDTG", /*iClass=*/0, TMVA::Types::kTesting);
+    //Print test and train ROC integrals
+    double trainFom = factory.GetROCIntegral(&loader, "BDTG", /*iClass=*/0, TMVA::Types::kTraining);
+    std::cout << "[BDTTrainModule] Training ROC Integral: " << trainFom << std::endl;
+    std::cout << "[BDTTrainModule] Testing ROC Integral: " << fom << std::endl;
     return fom;
 
     // XML weights will be in: dataset/weights/TMVAClassification_BDTG.weights.xml
@@ -403,6 +467,9 @@ Long64_t BDTTrainModule::EntryCount() const
 //------------------------------------------------------------------------------
 void BDTTrainModule::Initialise()
 {
+    // Manually set weights directory for TMVA
+    TMVA::gConfig().GetIONames().fWeightFileDir = fBDTWeightsDir;
+
     auto dfVec = BuildDataFrames(fInputFiles, fTreeName);
 
     std::vector<ROOT::RDF::RNode> nodes;
@@ -422,11 +489,11 @@ void BDTTrainModule::Initialise()
     //"!H:!V:NTrees=200:MinNodeSize=2.5%:MaxDepth=3:BoostType=Grad:"
                        //"Shrinkage=0.1:nCuts=20"
     //Optimise hyperparameters
-    std::vector<int> NTreesRange = {225, 250, 275, 300};
-    std::vector<int> MaxDepthRange = {4,5,6};
-    std::vector<double> LearningRateRange = {0.075, 0.1, 1.25};
-    std::vector<double> MinNodeSizeRange = {1.0, 1.5, 2.0};
-    std::vector<int> nCutsRange = {25, 30, 35, 40};
+    std::vector<int> NTreesRange = {150};
+    std::vector<int> MaxDepthRange = {6};
+    std::vector<double> LearningRateRange = {0.075};
+    std::vector<double> MinNodeSizeRange = {2.0};
+    std::vector<int> nCutsRange = {20};
     std::string methodString = FindOptimalCut(train_signal_File, train_bkg_File, test_signal_File, test_bkg_File,
                                               NTreesRange, MaxDepthRange, LearningRateRange, MinNodeSizeRange, nCutsRange);
     // Train the BDT using the selected variables (fTrainVars) and the prepared samples

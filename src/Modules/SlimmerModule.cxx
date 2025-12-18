@@ -14,6 +14,7 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     : Module(cfg)
     , fTreeName     (cfg.GetValue("Slimmer.TreeName","nuselection/NeutrinoSelectionFilter"  ))
     , fRunLabel     (cfg.GetValue("Global.RunLabel","run_x") )
+    , fMakePlots   (cfg.GetValue("Slimmer.MakePlots", false))
 {
 
     std::stringstream ssInput{cfg.GetValue("Slimmer.InputFiles", "")};
@@ -114,6 +115,7 @@ void SlimmerModule::Initialise()
         // In overlay this doesn't happen, but need to for data/ext files I think, so I set min/max to values outside the fiducial volume.
 
         using VecF = const std::vector<float>&;
+        using VecI = const std::vector<int>&;
 
         auto df1 = df
         .Define("min_x",
@@ -214,6 +216,105 @@ void SlimmerModule::Initialise()
                 return v.empty() ? -9999.0f : v[0];
             },
             {"trk_calo_energy_u_v"})
+        .Define("pfnplanehits_U_sum",
+            [](VecI v) {
+                int sum = 0;
+                for (const auto& val : v) sum += val;
+                return sum;
+            },
+            {"pfnplanehits_U"})
+        .Define("pfnplanehits_V_sum",
+            [](VecI v) {
+                int sum = 0;
+                for (const auto& val : v) sum += val;
+                return sum;
+            },
+            {"pfnplanehits_V"})
+        .Define("pfnplanehits_Y_sum",
+            [](VecI v) {
+                int sum = 0;
+                for (const auto& val : v) sum += val;
+                return sum;
+            },
+            {"pfnplanehits_Y"})
+        .Define("trk_score_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_score_v", "pfnplanehits_Y"})
+        .Define("shr_theta_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"shr_theta_v", "pfnplanehits_Y"})
+        .Define("shr_px_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"shr_px_v", "pfnplanehits_Y"})
+        .Define("trk_end_x_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_end_x_v", "pfnplanehits_Y"})
+        .Define("shr_phi_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"shr_phi_v", "pfnplanehits_Y"})
+        .Define("shr_pz_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"shr_pz_v", "pfnplanehits_Y"})
+        .Define("trk_theta_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_theta_v", "pfnplanehits_Y"})
+        .Define("trk_phi_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_phi_v", "pfnplanehits_Y"})
+        .Define("trk_dir_z_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_dir_z_v", "pfnplanehits_Y"})
+        .Define("trk_calo_energy_u_v_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"trk_calo_energy_u_v", "pfnplanehits_Y"})
+        .Define("pfnplanehits_U_maxE",
+            [](VecI var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -1 : var[maxEIndex];
+            },
+            {"pfnplanehits_U", "pfnplanehits_Y"})
+        .Define("pfnplanehits_V_maxE",
+            [](VecI var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -1 : var[maxEIndex];
+            },
+            {"pfnplanehits_V", "pfnplanehits_Y"})
+        .Define("pfnplanehits_Y_maxE",
+            [](VecI var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -1 : var[maxEIndex];
+            },
+            {"pfnplanehits_Y", "pfnplanehits_Y"})
         .Filter("swtrig==1"); // keep only events passing the software trigger
 
         ROOT::RDF::RSnapshotOptions opt;
@@ -223,9 +324,13 @@ void SlimmerModule::Initialise()
 
         df1.Snapshot(fTreeName, fOutFile, fVarsToKeep, opt);
 
-        Plotter::SaveHist(
-            df1.Histo1D({"sub_hist", ";run_number;Count", 50, 0, 600}, "sub").GetPtr(),
-            "slimmer_"+fRunLabel+"_run_histogram" , "prelim");
+        if (fMakePlots) {
+            std::cout << "Creating plots for file: " << fOutFile << std::endl;
+            Plotter::SaveHist(
+                df1.Histo1D({"sub_hist", ";run_number;Count", 50, 0, 600}, "sub").GetPtr(),
+                "slimmer_"+fRunLabel+"_run_histogram" , "prelim");
+
+        }
 
         fileIndex++;
     }

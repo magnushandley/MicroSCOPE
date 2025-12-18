@@ -375,13 +375,29 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     gPad->SetBottomMargin(0.3);
     gPad->SetLeftMargin(0.15);
 
-    // Build and draw ratio histogram                                                 
+    // Build and draw ratio histogram: data / MC with **data-only** uncertainties
     TH1D *ratio = (TH1D*)dataHists[0]->Clone("ratio");
     ratio->SetDirectory(0);
     ratio->SetTitle("");
     ratio->Sumw2();
-    ratio->Divide(hBkgTotal);
-    ratio->GetYaxis()->SetRangeUser(0.3,1.7);
+
+    // Fill ratio contents and errors explicitly:
+    //   ratio_bin = data / MC
+    //   ratio_err = data_err / MC   (data-only statistical error)
+    for (int b = 1; b <= ratio->GetNbinsX(); ++b) {
+        const double dataContent = dataHists[0]->GetBinContent(b);
+        const double dataError   = dataHists[0]->GetBinError(b);
+        const double mcContent   = hBkgTotal ? hBkgTotal->GetBinContent(b) : 0.0;
+
+        if (mcContent > 0.0) {
+            ratio->SetBinContent(b, dataContent / mcContent);
+            ratio->SetBinError(b,   dataError   / mcContent);
+        } else {
+            ratio->SetBinContent(b, 0.0);
+            ratio->SetBinError(b,   0.0);
+        }
+    }
+    ratio->GetYaxis()->SetRangeUser(0.4,2.0);
 
     ratio->SetMarkerStyle(20);
     ratio->SetMarkerColor(kBlack);
@@ -397,16 +413,35 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratio->GetYaxis()->SetTitleSize(0.08);
     ratio->GetYaxis()->SetLabelSize(0.08);
 
-    // Draw MC statistical uncertainty band in ratio panel                            
+    // Draw MC statistical uncertainty band in ratio panel.
+    // We want a band at 1 with width (MC_err / MC), i.e. MC-only uncertainty.
     TH1D *ratioMC = (TH1D*)hBkgTotal->Clone("ratioMC");
     ratioMC->SetDirectory(0);
     ratioMC->SetTitle("");
     ratioMC->GetYaxis()->SetTitleOffset(0.5);
     ratioMC->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
     ratioMC->Sumw2();
-    ratioMC->GetYaxis()->SetRangeUser(0.3,1.7);
+    ratioMC->GetYaxis()->SetRangeUser(0.4,2.0);
     ratioMC->GetYaxis()->SetTitle("Data / MC");
-    ratioMC->Divide(hBkgTotal);
+
+    // Explicitly set band contents/errors: 1 ± (MC_error / MC)
+    for (int b = 1; b <= ratioMC->GetNbinsX(); ++b) {
+        const double mcContent = hBkgTotal ? hBkgTotal->GetBinContent(b) : 0.0;
+        const double mcError   = hBkgTotal ? hBkgTotal->GetBinError(b)   : 0.0;
+
+        if (mcContent > 0.0) {
+            ratioMC->SetBinContent(b, 1.0);
+            ratioMC->SetBinError(b,   mcError / mcContent);
+            std::cout << "[Plotter] Ratio MC band bin " << b 
+                      << ": content = " << ratioMC->GetBinContent(b)
+                      << ", error = " << ratioMC->GetBinError(b)
+                      << std::endl;
+        } else {
+            ratioMC->SetBinContent(b, 0.0);
+            ratioMC->SetBinError(b,   0.0);
+        }
+    }
+
     //ratioMC->SetFillStyle(3001);                    
     ratioMC->SetFillColorAlpha(kGray + 2, 0.3);     
     ratioMC->SetLineColor(kBlack);
