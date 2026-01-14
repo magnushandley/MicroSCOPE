@@ -1,0 +1,134 @@
+{
+    "GlobalSettings": {
+        "RunLabel": "run4b",
+        "InputFiles": ["/exp/uboone/app/users/anavrera/APE/MicroSCOPE/slimmed/run4b_slimmed_reco_comp.root"],
+        "OutputFile": "/exp/uboone/app/users/anavrera/APE/MicroSCOPE/slimmed/run4b_slimmed_reco_comp_presel.root",
+        "RecoAlgs": ["pandora", "wirecell"]   
+    },
+    
+    "Variables":{
+
+        "pandora":{
+
+            "General":[
+                "run",
+                "sub",
+                "evt",
+                "nslice",
+                "n_pfps"
+            ],
+
+            "Truth":[
+                "nu_pdg",
+                "true_nu_vtx_x",
+                "true_nu_vtx_y",
+                "true_nu_vtx_z",
+                "true_nu_vtx_sce_x",
+                "true_nu_vtx_sce_y",
+                "true_nu_vtx_sce_z",
+                "mc_pdg",
+                "mc_px",
+                "mc_py",
+                "mc_pz",
+                "mc_trackid"
+            ],
+
+            "Slice":[
+                "slice_orig_pass_id",
+                "slice_orig_topo_score",
+                "topological_score",
+                "nu_completeness_from_pfp", 
+                "nu_purity_from_pfp", 
+                "pfnplanehits_U", 
+                "pfnplanehits_V", 
+                "pfnplanehits_Y", 
+                "NeutrinoEnergy2", 
+                "SliceCaloEnergy2",
+                "nu_flashmatch_score",
+                "contained_sps_ratio", 
+                "contained_fraction",
+                "trk_score"
+            ],
+            
+            "Vertex":[
+                "reco_nu_vtx_x",
+                "reco_nu_vtx_y",
+                "reco_nu_vtx_z",
+                "reco_nu_vtx_sce_x",
+                "reco_nu_vtx_sce_y",
+                "reco_nu_vtx_sce_z"
+            ],
+
+            "Tracks":[
+                "n_tracks",
+                "trk_theta_v", 
+                "trk_phi_v", 
+                "trk_dir_x_v", 
+                "trk_dir_y_v", 
+                "trk_dir_z_v", 
+                "trk_energy", 
+                "trk_energy_hits_tot",
+                "trk_energy_tot",
+                "trk_score_v",
+                "trk_calo_energy_u_v",
+                "trk_end_x_v",
+                "trk_sce_start_x_v", 
+                "trk_sce_end_x_v",
+                "trk_sce_start_y_v", 
+                "trk_sce_end_y_v",
+                "trk_sce_start_z_v", 
+                "trk_sce_end_z_v"
+            ],
+
+            "Showers":[
+                "n_showers",
+                "shr_theta_v", 
+                "shr_phi_v", 
+                "shr_px_v", 
+                "shr_py_v", 
+                "shr_pz_v", 
+                "shrclusdir0", 
+                "shrclusdir1", 
+                "shrclusdir2", 
+                "shr_energy_tot"
+            ]
+        }, 
+
+        "wirecell":{
+
+            "General":[
+                "run",
+                "subrun",
+                "event"
+            ],
+
+            "Truth":[
+                "truth_nuEnergy",
+                "truth_nuPdg",
+                "truth_vtxX",
+                "truth_vtxY",
+                "truth_vtxZ"
+            ]
+        },
+
+        "lantern":{
+
+            "General":[
+                "run",
+                "subrun",
+                "event"
+            ],
+
+            "Truth":[
+                "trueNuE",
+                "trueNuPDG",
+                "trueNuCCNC",
+                "trueVtxX",
+                "trueVtxY",
+                "trueVtxZ"
+            ]
+        }
+    }
+
+}
+
