@@ -66,7 +66,14 @@ public:
                                       const std::vector<std::string>& labels,
                                       const std::string& basename,
                                       bool logy = false,
-                                      const std::vector<double> weights = {});
+                                      const std::vector<double> weights = {},
+                                      bool blindedData = false);
+
+    static void BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
+                          const std::vector<std::string>& labels,
+                          const std::string& basename,
+                          bool logy = false,
+                          const std::vector<double> weights = {});
 
 private:
     

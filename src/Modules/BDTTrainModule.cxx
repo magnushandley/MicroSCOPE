@@ -34,7 +34,7 @@ using namespace Analysis;
 BDTTrainModule::BDTTrainModule(const TEnv& cfg)
     : Module(cfg)
     , fTreeName   (cfg.GetValue("BDTTrainModule.TreeName", "nuselection/NeutrinoSelectionFilter"))
-    , fTrainFraction(cfg.GetValue("BDTTrainModule.TrainFraction", 0.8f))
+    //, fTrainFractions(cfg.GetValue("BDTTrainModule.TrainFraction", 0.8f))
     , fBDTWeightsDir(cfg.GetValue("BDTTrainModule.BDTWeightsDir", "./bdt_weights/"))
 {
 
@@ -72,6 +72,12 @@ BDTTrainModule::BDTTrainModule(const TEnv& cfg)
         fSampleWeights.push_back(weight);
     }
 
+    std::stringstream ssFractions{cfg.GetValue("BDTTrainModule.TrainFractions", "")};
+    float fraction;
+    while (ssFractions >> fraction) {
+        fTrainFractions.push_back(fraction);
+    }
+
 }
 
 //------------------------------------------------------------------------------
@@ -102,7 +108,7 @@ std::vector<std::string>
 BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
                                       const std::vector<std::string> sampleLabels,
                                       const std::vector<double> sampleWeights,
-                                      float trainFraction) const
+                                      std::vector<double> trainFractions) const
 {
     // Build FOUR output files, each aggregating events coming
     // from multiple input dataframes:
@@ -120,6 +126,8 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
     //    split them into signal/background groups.
     std::vector<ROOT::RDF::RNode> sigNodes;
     std::vector<ROOT::RDF::RNode> bkgNodes;
+    std::vector<double> sigTrainFracs;
+    std::vector<double> bkgTrainFracs;
     sigNodes.reserve(dfs.size());
     bkgNodes.reserve(dfs.size());
 
@@ -129,8 +137,13 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
         const double weight = sampleWeights[i];
 
         auto withWeight = dfs[i].Define("sample_weight", [weight]() { return weight; });
-        if (isSignal) sigNodes.emplace_back(withWeight);
-        else          bkgNodes.emplace_back(withWeight);
+        if (isSignal) {
+            sigNodes.emplace_back(withWeight);
+            sigTrainFracs.push_back(trainFractions[i]);
+        } else {
+            bkgNodes.emplace_back(withWeight);
+            bkgTrainFracs.push_back(trainFractions[i]);
+        }
     }
 
     // Split each node individually, snapshot to temp files, then merge per-class.
@@ -148,11 +161,16 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
     auto createTempFiles = [&](const std::vector<ROOT::RDF::RNode>& nodes,
                             std::vector<std::string>& tmpTrain,
                             std::vector<std::string>& tmpTest,
-                            const char* tag) {
+                            const char* tag,
+                            const std::vector<double>& tmpTrainFracs = {}) {
+
+        if (tmpTrainFracs.size() != nodes.size())
+            throw std::runtime_error("[BDTTrainModule] tmpTrainFracs size mismatch");
+
         for (size_t i = 0; i < nodes.size(); ++i) {
             auto &n = const_cast<ROOT::RDF::RNode&>(nodes[i]);
             const auto nEntries = n.Count().GetValue();
-            const auto nTrain  = static_cast<Long64_t>(std::round(nEntries * trainFraction));
+            const auto nTrain  = static_cast<Long64_t>(std::round(nEntries * tmpTrainFracs[i]));
             const auto nTest = nEntries - nTrain;
 
             std::cout << "[BDTTrainModule] Sample " << tag << " " << i
@@ -184,8 +202,8 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
         }
     };
 
-    createTempFiles(sigNodes, tmp_train_sig, tmp_test_sig, "sig");
-    createTempFiles(bkgNodes, tmp_train_bkg, tmp_test_bkg, "bkg");
+    createTempFiles(sigNodes, tmp_train_sig, tmp_test_sig, "sig", sigTrainFracs);
+    createTempFiles(bkgNodes, tmp_train_bkg, tmp_test_bkg, "bkg", bkgTrainFracs);
 
     auto mergeFiles = [](const std::vector<std::string>& inputs,
                          const std::string& output) {
@@ -468,17 +486,25 @@ Long64_t BDTTrainModule::EntryCount() const
 void BDTTrainModule::Initialise()
 {
     // Manually set weights directory for TMVA
+    std::cout << "Debug 1" << std::endl;
     TMVA::gConfig().GetIONames().fWeightFileDir = fBDTWeightsDir;
 
+    std::cout << "debug 2" << std::endl;
     auto dfVec = BuildDataFrames(fInputFiles, fTreeName);
+    std::cout << "debug 3" << std::endl;
 
     std::vector<ROOT::RDF::RNode> nodes;
     nodes.reserve(dfVec.size());
     for (auto &dfPtr : dfVec) nodes.emplace_back(*dfPtr);
 
-    std::cout << "Training fraction: " << fTrainFraction << std::endl;
+    std::cout << "Training fractions: ";
+    for (size_t i = 0; i < fTrainFractions.size(); ++i) {
+        std::cout << "sample" << fSampleLabels[i] << ": " << fTrainFractions[i] << " ";
+    }
+    std::cout << std::endl;
+
     // Create training and testing samples, return the filenames
-    std::vector<std::string> sampleVec = BuildTestTrainSamples(nodes, fSampleLabels, fSampleWeights, fTrainFraction);
+    std::vector<std::string> sampleVec = BuildTestTrainSamples(nodes, fSampleLabels, fSampleWeights, fTrainFractions);
     std::cout << "[BDTTrainModule] Created training and testing samples:\n";
 
     std::string train_signal_File = sampleVec[0];
@@ -489,10 +515,11 @@ void BDTTrainModule::Initialise()
     //"!H:!V:NTrees=200:MinNodeSize=2.5%:MaxDepth=3:BoostType=Grad:"
                        //"Shrinkage=0.1:nCuts=20"
     //Optimise hyperparameters
+
     std::vector<int> NTreesRange = {150};
-    std::vector<int> MaxDepthRange = {6};
-    std::vector<double> LearningRateRange = {0.075};
-    std::vector<double> MinNodeSizeRange = {2.0};
+    std::vector<int> MaxDepthRange = {4};
+    std::vector<double> LearningRateRange = {0.1};
+    std::vector<double> MinNodeSizeRange = {6.0};
     std::vector<int> nCutsRange = {20};
     std::string methodString = FindOptimalCut(train_signal_File, train_bkg_File, test_signal_File, test_bkg_File,
                                               NTreesRange, MaxDepthRange, LearningRateRange, MinNodeSizeRange, nCutsRange);

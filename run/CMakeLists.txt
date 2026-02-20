@@ -13,6 +13,9 @@ endfunction()
 
 make_runner(run_slimmer)
 make_runner(run_preselection)
+make_runner(run_bdttrain)
+make_runner(run_bdteval)
+make_runner(run_histfit)
 
 #add_executable(run_slimmer run_slimmer.cxx)
 

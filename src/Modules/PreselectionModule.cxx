@@ -159,12 +159,36 @@ void PreselectionModule::Initialise()
     // Now we can write each filtered RNode to a new TTree in the output file
 
     std::vector<TH1D> preSelectednpfpsVec;
+    std::vector<TH1D> preSelectednTracksVec;
     std::vector<TH1D> preSelectedNuE2Vec;
+    std::vector<TH1D> preSelectedSliceCaloE2Vec;
+    std::vector<TH1D> preSelectedShrdedxmaxVec;
+    std::vector<TH1D> preSelectedShrETotVec;
+    std::vector<TH1D> preSelectedTrkETotVec;
+    std::vector<TH1D> preSelectedMaxTrkEVec;
+    std::vector<TH1D> preSelectedShrClusDir2Vec;
     std::vector<TH1D> preSelectedFlashMatchScoreVec;
     std::vector<TH1D> preSelectedTopologicalScoreVec;
     std::vector<TH1D> preSelectedShrPhivVec;
     std::vector<TH1D> preSelectedShrFitPzFracVec;
     std::vector<TH1D> preSelectedShrFitThetaVec;
+    std::vector<TH1D> pfng2shravrg_maxEVec;
+    std::vector<TH1D> preSelectedpfng2mipfrac_maxEVec;
+    std::vector<TH1D> preSelectedpfng2hipfrac_maxEVec;
+    std::vector<TH1D> preSelectedpfng2bkgfrac_maxEVec;
+    std::vector<TH1D> preSelectedMergedTimeVec;
+    std::vector<TH1D> preSelectedInteractionTimeVec;
+    std::vector<TH1D> preSelectedUPlaneHitsVec;
+    std::vector<TH1D> preSelectedVPlaneHitsVec;
+    std::vector<TH1D> preSelectedYPlaneHitsVec;
+    std::vector<TH1D> preSelectedShrFitThetaMaxEVec;
+    std::vector<TH1D> preSelectedShrFitPzFracMaxEVec;
+    std::vector<TH1D> preSelectedShrPhivMaxEVec;
+    std::vector<TH1D> preSelectedTrkFitThetaMaxEVec;
+    std::vector<TH1D> preSelectedTrkFitPzFracMaxEVec;
+    std::vector<TH1D> preSelectedTrkPhivMaxEVec;
+    std::vector<TH1D> preSelectedpi0MassYVec;
+    std::vector<TH1D> preselectedFlashTimeVec;
 
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         std::cout << "\n[Preselection] Writing output for sample: " << fSampleLabels[i] << '\n';
@@ -207,6 +231,15 @@ void PreselectionModule::Initialise()
                     "Count",
                     5, 0.5, 5.5));
 
+            preSelectednTracksVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_nTracks_" + fSampleLabels[i]).c_str(),
+                    "n_tracks", 
+                    "Number of Tracks",
+                    "Count",
+                    5, 0.5, 5.5));
+
             preSelectedNuE2Vec.push_back(
                 Plotter::CreateTH1DFromRNode(
                     nodes[i],
@@ -216,6 +249,60 @@ void PreselectionModule::Initialise()
                     "Count",
                     20, 0.0, 500.0));
 
+            preSelectedSliceCaloE2Vec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_SliceCaloE2_" + fSampleLabels[i]).c_str(),
+                    "SliceCaloEnergy2",
+                    "Slice Calorimetric Energy [MeV]",
+                    "Count",
+                    20, 0.0, 500.0));
+
+            preSelectedShrdedxmaxVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_Shrdedxmax_" + fSampleLabels[i]).c_str(),
+                    "shr_tkfit_dedx_max",
+                    "Max Shower dE/dx [MeV/cm]",
+                    "Count",
+                    20, 0.0, 10.0));
+
+            preSelectedShrETotVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrETot_" + fSampleLabels[i]).c_str(),
+                    "shr_energy_tot",
+                    "Total Shower Energy [MeV]",
+                    "Count",
+                    20, 0.0, 0.25));
+
+            preSelectedTrkETotVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_TrkETot_" + fSampleLabels[i]).c_str(),
+                    "trk_energy_tot",
+                    "Total Track Energy [MeV]",
+                    "Count",
+                    20, 0.0, 0.75));
+
+            preSelectedMaxTrkEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_MaxTrkE_" + fSampleLabels[i]).c_str(),
+                    "trk_energy",
+                    "Max Track Energy [MeV]",
+                    "Count",
+                    20, 0.0, 500.0));
+
+            preSelectedShrClusDir2Vec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrClusDir2_" + fSampleLabels[i]).c_str(),
+                    "shrclusdir2",
+                    "Average Shower Cluster Direction [degrees]",
+                    "Count",
+                    20, 0, 360.0));
+
             preSelectedFlashMatchScoreVec.push_back(
                 Plotter::CreateTH1DFromRNode(
                     nodes[i],
@@ -223,7 +310,7 @@ void PreselectionModule::Initialise()
                     "nu_flashmatch_score", 
                     "Flash Match Score",
                     "Count",
-                    20, 0.0, 15.0));
+                    30, 0.0, 30.0));
 
             preSelectedTopologicalScoreVec.push_back(
                 Plotter::CreateTH1DFromRNode(
@@ -264,6 +351,159 @@ void PreselectionModule::Initialise()
                     20, 0.0, 3.14,
                     true)); // remove vector duplicates by taking first element only
 
+            pfng2shravrg_maxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_pfng2shravrg_maxE_" + fSampleLabels[i]).c_str(),
+                    "pfng2shravrg_maxE",
+                    "PF NG2 Shr Average Score",
+                    "Count",
+                    20, 0.0, 1.0));
+
+            preSelectedpfng2mipfrac_maxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_pfng2mipfrac_maxE_" + fSampleLabels[i]).c_str(),
+                    "pfng2mipfrac_maxE",
+                    "PFP NG2 MIP Fraction",
+                    "Count",
+                    20, 0.0, 1.0));
+
+            preSelectedpfng2hipfrac_maxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_pfng2hipfrac_maxE_" + fSampleLabels[i]).c_str(),
+                    "pfng2hipfrac_maxE",
+                    "PFP NG2 HIP Fraction",
+                    "Count",
+                    20, 0.0, 1.0));
+
+            preSelectedpfng2bkgfrac_maxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_pfng2bkgfrac_maxE_" + fSampleLabels[i]).c_str(),
+                    "pfng2bkgfrac_maxE",
+                    "PFP NG2 Background Fraction",
+                    "Count",
+                    20, 0.0, 1.0));
+
+            preSelectedMergedTimeVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_MergedTime_" + fSampleLabels[i]).c_str(),
+                    "interaction_time_merged",
+                    "Merged Interaction Time [ns]",
+                    "Count",
+                    20, 0.0, 18.831));
+
+            preSelectedInteractionTimeVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_InteractionTime_" + fSampleLabels[i]).c_str(),
+                    "interaction_time_abs",
+                    "Absolute Interaction Time [ns]",
+                    "Count",
+                    500, 0.0, 20000.0));
+
+            preSelectedUPlaneHitsVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_UPlaneHits_" + fSampleLabels[i]).c_str(),
+                    "pfnplanehits_U",
+                    "Number of U Plane Hits",
+                    "Count",
+                    30, 0.0, 300.0));
+
+            preSelectedVPlaneHitsVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_VPlaneHits_" + fSampleLabels[i]).c_str(),
+                    "pfnplanehits_V",
+                    "Number of V Plane Hits",
+                    "Count",
+                    30, 0.0, 300.0));
+
+            preSelectedYPlaneHitsVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],   
+                    ("preselection_hist_YPlaneHits_" + fSampleLabels[i]).c_str(),
+                    "pfnplanehits_Y",
+                    "Number of Y Plane Hits",
+                    "Count",
+                    30, 0.0, 300.0));
+
+            preSelectedShrFitThetaMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrFitThetaMaxE_" + fSampleLabels[i]).c_str(),
+                    "shr_theta_v_maxE",
+                    "Shr Fit Theta (max E object) [rad]",
+                    "Count",
+                    20, 0.0, 3.14));
+
+            preSelectedShrFitPzFracMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrFitPzFracMaxE_" + fSampleLabels[i]).c_str(),
+                    "shr_pz_v_maxE",
+                    "Shr Fit Pz Frac (max E object)",
+                    "Count",
+                    20, -1.0, 1.0));
+
+            preSelectedShrPhivMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_ShrPhivMaxE_" + fSampleLabels[i]).c_str(),
+                    "shr_phi_v_maxE",
+                    "Shr Phi (max E object) [rad]",
+                    "Count",
+                    20, -3.14, 3.14));
+
+            preSelectedTrkFitThetaMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_TrkFitThetaMaxE_" + fSampleLabels[i]).c_str(),
+                    "trk_theta_v_maxE",
+                    "Track Fit Theta (max E object) [rad]",
+                    "Count",
+                    20, 0.0, 3.14));
+
+            preSelectedTrkFitPzFracMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_TrkFitPzFracMaxE_" + fSampleLabels[i]).c_str(),
+                    "trk_dir_z_v_maxE",
+                    "Track Fit Pz Frac (max E object)",
+                    "Count",
+                    20, -1.0, 1.0));
+
+            preSelectedTrkPhivMaxEVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_TrkPhivMaxE_" + fSampleLabels[i]).c_str(),
+                    "trk_phi_v_maxE",
+                    "Track Phi (max E object) [rad]",
+                    "Count",
+                    20, -3.14, 3.14));
+
+            preSelectedpi0MassYVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_pi0MassY_" + fSampleLabels[i]).c_str(),
+                    "pi0_mass_Y",
+                    "Reconstructed #pi^{0} Mass [MeV]",
+                    "Count",
+                    30, 0.0, 200.0));
+
+            preselectedFlashTimeVec.push_back(
+                Plotter::CreateTH1DFromRNode(
+                    nodes[i],
+                    ("preselection_hist_FlashTime_" + fSampleLabels[i]).c_str(),
+                    "flash_time_flash_matching",
+                    "Flash Time [ns]",
+                    "Count",
+                    30, 6.5, 16.5));
+
         }
 
     }
@@ -276,9 +516,51 @@ void PreselectionModule::Initialise()
                         false, // logy
                         fSampleWeights);
 
+    Plotter::FullDataMCSignalPlot(preSelectednTracksVec,
+                         fSampleLabels,
+                         "preselection_full_hist_nTracks",
+                         false, // logy
+                         fSampleWeights);
+
     Plotter::FullDataMCSignalPlot(preSelectedNuE2Vec,
                          fSampleLabels,
                          "preselection_full_hist_NeutrinoEnergy2",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedSliceCaloE2Vec,
+                         fSampleLabels,
+                         "preselection_full_hist_SliceCaloE2",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrdedxmaxVec,
+                         fSampleLabels,
+                         "preselection_full_hist_Shrdedxmax",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrETotVec,
+                         fSampleLabels,
+                         "preselection_full_hist_ShrETot",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedTrkETotVec,
+                         fSampleLabels,
+                         "preselection_full_hist_TrkETot",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedMaxTrkEVec,
+                         fSampleLabels,
+                         "preselection_full_hist_MaxTrkE",
+                         false, // logy
+                         fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrClusDir2Vec,
+                         fSampleLabels,
+                         "preselection_full_hist_ShrClusDir2",
                          false, // logy
                          fSampleWeights);
 
@@ -311,6 +593,104 @@ void PreselectionModule::Initialise()
                             "preselection_full_hist_ShrFitTheta",
                             false, // logy
                             fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(pfng2shravrg_maxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_pfng2shravrg_maxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedpfng2mipfrac_maxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_pfng2mipfrac_maxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedpfng2hipfrac_maxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_pfng2hipfrac_maxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedpfng2bkgfrac_maxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_pfng2bkgfrac_maxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedMergedTimeVec,
+                            fSampleLabels,
+                            "preselection_full_hist_MergedTime",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedInteractionTimeVec,
+                            fSampleLabels,
+                            "preselection_full_hist_InteractionTime",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedUPlaneHitsVec,
+                            fSampleLabels,
+                            "preselection_full_hist_UPlaneHits",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedVPlaneHitsVec,
+                            fSampleLabels,
+                            "preselection_full_hist_VPlaneHits",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedYPlaneHitsVec,
+                            fSampleLabels,
+                            "preselection_full_hist_YPlaneHits",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrFitThetaMaxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_ShrFitThetaMaxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedShrFitPzFracMaxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_ShrFitPzFracMaxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedTrkPhivMaxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_TrkPhivMaxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedTrkFitThetaMaxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_TrkFitThetaMaxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedTrkFitPzFracMaxEVec,
+                            fSampleLabels,
+                            "preselection_full_hist_TrkFitPzFracMaxE",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preSelectedpi0MassYVec,
+                            fSampleLabels,
+                            "preselection_full_hist_pi0MassY",
+                            false, // logy
+                            fSampleWeights);
+
+    Plotter::FullDataMCSignalPlot(preselectedFlashTimeVec,
+                            fSampleLabels,
+                            "preselection_full_hist_FlashTime",
+                            false, // logy
+                            fSampleWeights);
+
+    
 }
 
 void PreselectionModule::Finalise()

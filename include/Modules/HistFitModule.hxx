@@ -52,10 +52,15 @@ private:
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
     double CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const;
+    double BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
+        std::vector<std::string> sampleLabels,
+        std::vector<double> sampleWeights,
+        double signalBinThreshold) const;
 
     /// Configuration
     std::vector<std::string>      fInputFiles;
     std::string        fTreeName;        ///< name of the input TTree
+    bool fBlindData;     
     std::vector<std::string> fSampleLabels; ///< Labels for the samples, e.g. "data", "overlay", "signal"
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     double fDataPOT;    ///< POT for the data sample

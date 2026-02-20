@@ -188,7 +188,8 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
                       const std::vector<std::string>& labels,
                       const std::string& basename,
                       bool logy,
-                      const std::vector<double> weights)
+                      const std::vector<double> weights,
+                      bool blindedData)
 {
     // I am using TH1D objects rather than pointers because the pointers returned by RDataFrame are
     // smart pointers, which I think are deallocated before we can use them here. Had a bunch of seg faults...
@@ -397,7 +398,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
             ratio->SetBinError(b,   0.0);
         }
     }
-    ratio->GetYaxis()->SetRangeUser(0.4,2.0);
+    ratio->GetYaxis()->SetRangeUser(0.7,1.3);
 
     ratio->SetMarkerStyle(20);
     ratio->SetMarkerColor(kBlack);
@@ -421,7 +422,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     ratioMC->GetYaxis()->SetTitleOffset(0.5);
     ratioMC->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
     ratioMC->Sumw2();
-    ratioMC->GetYaxis()->SetRangeUser(0.4,2.0);
+    ratioMC->GetYaxis()->SetRangeUser(0.7,1.3);
     ratioMC->GetYaxis()->SetTitle("Data / MC");
 
     // Explicitly set band contents/errors: 1 ± (MC_error / MC)
@@ -463,6 +464,177 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     unity->Draw();
     c->Update();
 
+    c->SaveAs((basename + ".png").c_str());
+    c->SaveAs((basename + ".pdf").c_str());
+}
+
+void Plotter::BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
+                      const std::vector<std::string>& labels,
+                      const std::string& basename,
+                      bool logy,
+                      const std::vector<double> weights)
+{
+    // I am using TH1D objects rather than pointers because the pointers returned by RDataFrame are
+    // smart pointers, which I think are deallocated before we can use them here. Had a bunch of seg faults...
+
+    //Clone histograms to avoid modifying the originals
+    std::vector<TH1D> hists;
+    for (const auto& h : rawHists) {
+        hists.push_back(*(TH1D*)h.Clone());
+    }
+
+    std::cout << "[Plotter] Creating full stacked histogram: " << basename << std::endl;
+    static const Int_t colors[] = {TColor::GetColor("#e69f00"),TColor::GetColor("#5664e9"),TColor::GetColor("#009e73"), kOrange, kViolet, kCyan, kMagenta, kYellow};
+    
+    std::cout << "Number of entries in " << labels[0] << ": " << hists.back().GetEntries() << std::endl;
+    std::cout << "Hists size: " << hists.size() << ", Labels size: " << labels.size() << std::endl;
+    if (hists.empty() || hists.size() != labels.size()) return;
+    std::cout << "Number of histograms: " << hists.size() << std::endl;
+
+    ApplyStyle("prelim");
+    auto c = MakeCanvas(basename);
+    if (logy) c->SetLogy();
+
+    std::string stackTitle = "Stacked Histogram: " + basename;
+    THStack *hs = new THStack("hs", stackTitle.c_str());
+
+    std::cout << "[Plotter] Adding " << hists.size() << " histograms to stack:\n";
+
+    std::vector<TH1D*> signalHists;
+    std::vector<TH1D*> bkgHists;
+
+    // Single pad: main plot only (no data/MC ratio panel)
+    c->cd();
+    gPad->UseCurrentStyle();
+    gPad->SetLeftMargin(0.15);
+
+    for (size_t i = 0; i < hists.size(); ++i) {
+        auto& hist = hists[i];
+        
+        // Because the labels are used for plotting, I check for the substrings rather than whole things.
+        auto lower = [](std::string s){ std::transform(s.begin(), s.end(), s.begin(), ::tolower); return s; };
+        const std::string llbl = lower(labels[i]);
+        const bool isSignal = llbl.find("signal") != std::string::npos;
+        const bool isData   = llbl.find("data")   != std::string::npos;
+
+        if (isSignal) {
+            // Style the signal and queue for overlay after the stack is drawn
+            hist.SetLineColor(kRed);
+            hist.SetLineWidth(2);
+            hist.SetFillStyle(0);
+            // Optionally scale signal here (currently unity)
+            if (i < weights.size() && weights[i] != 1.0) {
+                hist.Scale(weights[i]);
+                std::cout << "    [Plotter] Signal scaled by weight: " << weights[i] << std::endl;
+            }
+            signalHists.push_back(&hist);
+            std::cout << " [Plotter] Queued signal histogram " << i << " for overlay." << std::endl;
+            std::cout << "Number of signal entries: " << hist.GetEntries() << std::endl;
+        }
+        else if (isData) {
+            std::cout << " [Plotter] Data histogram found - ignoring " << i << "." << std::endl;
+            // Do not add data histogram to the plot (blinded)
+        }
+        else {
+            hist.Sumw2();
+            std::cout << "  Adding hist number = " << i
+                      << " name=" << hist.GetName()
+                      << " entries=" << hist.GetEntries()
+                      << std::endl;
+            hist.SetFillColor(colors[i % (sizeof(colors)/sizeof(colors[0]))]);
+            hist.SetLineColor(hist.GetFillColor());
+            hist.SetFillStyle(1001);
+            std::cout << " [Plotter] Applying weight for histogram " << i << ": ";
+            if (i < weights.size() && weights[i] != 1.0) {
+                hist.Scale(weights[i]);
+                std::cout << "    Scaled by weight: " << weights[i] << std::endl;
+            }
+            hs->Add(&hist);
+            bkgHists.push_back(&hist);
+        }
+    }
+
+    TList* histList = hs->GetHists();
+
+    // Iterate through the list and print information about each histogram
+    if (histList) {
+        TIterator* nextHist = histList->MakeIterator();
+        TObject* obj;
+        std::cout << "Histograms in THStack '" << hs->GetName() << "':" << std::endl;
+        while ((obj = nextHist->Next())) {
+            TH1* hist = dynamic_cast<TH1*>(obj);
+            if (hist) {
+                std::cout << "  - Name: " << hist->GetName() << ", Title: " << hist->GetTitle() << std::endl;
+            }
+        }
+        delete nextHist; // Clean up the iterator
+    }
+
+
+    // Draw the stacked backgrounds first
+    hs->Draw("HIST");
+
+    // Build total background histogram and its statistical uncertainty band
+    TH1D* hBkgTotal = nullptr;
+    if (!bkgHists.empty()) {
+        hBkgTotal = (TH1D*)bkgHists[0]->Clone((std::string(basename) + "_bkg_total").c_str());
+        hBkgTotal->SetDirectory(nullptr);
+        hBkgTotal->Sumw2();
+        for (size_t ib = 1; ib < bkgHists.size(); ++ib) {
+            hBkgTotal->Add(bkgHists[ib]);
+        }
+    }
+
+    double yMax = hs->GetMaximum();
+    for (auto* sh : signalHists) yMax = std::max(yMax, sh->GetMaximum());
+    if (hBkgTotal) {
+        // consider content+error to avoid clipping the band
+        double yBandMax = 0.0;
+        for (int b = 1; b <= hBkgTotal->GetNbinsX(); ++b) {
+            yBandMax = std::max(yBandMax, hBkgTotal->GetBinContent(b) + hBkgTotal->GetBinError(b));
+        }
+        yMax = std::max(yMax, yBandMax);
+    }
+    hs->SetMaximum(1.2 * yMax);
+
+    // Draw statistical uncertainty band for the total background
+    if (hBkgTotal) {
+        TH1D* hBkgBand = (TH1D*)hBkgTotal->Clone((std::string(basename) + "_bkg_band").c_str());
+        hBkgBand->SetDirectory(nullptr);
+        hBkgBand->SetFillColorAlpha(kGray+1, 0.5);
+        //hBkgBand->SetFillStyle(3001); // hatched/transparent style
+        hBkgBand->SetLineColor(kGray+2);
+        hBkgBand->SetLineWidth(1);
+        hBkgBand->SetMarkerSize(0);
+        hBkgBand->Draw("E2 SAME"); // draw band as content ± error
+    }
+
+    // Now overlay signal(s) on top of the stack
+    for (auto* sh : signalHists) sh->Draw("HIST SAME");
+
+    // Axis titles come from the first histogram
+    hs->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
+    hs->GetYaxis()->SetTitle(hists[0].GetYaxis()->GetTitle());
+
+    auto leg = new TLegend(0.7, 0.7, 0.88, 0.88);
+    for (size_t i = 0; i < hists.size(); ++i) {
+        auto lower = [](std::string s){ std::transform(s.begin(), s.end(), s.begin(), ::tolower); return s; };
+        const std::string llbl = lower(labels[i]);
+        const bool isSignal = llbl.find("signal") != std::string::npos;
+        const char* opt = isSignal ? "l" : "f";
+        leg->AddEntry(&hists[i], labels[i].c_str(), opt);
+    }
+    if (hBkgTotal) {
+        // Add a dummy clone for legend styling consistency
+        TH1D* hBkgBandLegend = (TH1D*)hBkgTotal->Clone((std::string(basename) + "_bkg_band_legend").c_str());
+        hBkgBandLegend->SetFillColor(kGray+1);
+        hBkgBandLegend->SetFillStyle(3002);
+        hBkgBandLegend->SetLineColor(kGray+2);
+        hBkgBandLegend->SetMarkerSize(0);
+        leg->AddEntry(hBkgBandLegend, "Bkg. stat. unc.", "f");
+    }
+
+    leg->Draw();
     c->SaveAs((basename + ".png").c_str());
     c->SaveAs((basename + ".pdf").c_str());
 }

@@ -3,6 +3,7 @@
 
 #include "Framework/Module.hxx"
 #include "Utils/Plotter.hxx"
+#include "Utils/TimingUtils.hxx"
 
 #include <ROOT/RDataFrame.hxx>
 #include <TChain.h>
@@ -30,12 +31,14 @@ private:
 
     /// Configuration
     std::vector<std::string> fInputFiles;      ///< comma-separated list
+    std::vector<std::string> fSampleLabels;   ///< labels for each input file
     std::string        fTreeName;        ///< name of the input TTree
 
     std::vector<std::string> fOutputFiles;         ///< result files
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::string        fRunLabel;        ///< “run_x”, …
     bool              fMakePlots;      ///< whether to create output plots
+    double            fBeamSpillPeriod; ///< Beam spill period in ns
 
     /// Working objects
     std::unique_ptr<TChain>     fChain;

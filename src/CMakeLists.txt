@@ -19,6 +19,7 @@ target_link_libraries(AnalysisModules
       ROOT::Core ROOT::RIO ROOT::Tree
       ROOT::Hist ROOT::Imt ROOT::ROOTDataFrame
       ROOT::TMVA ROOT::RooFit ROOT::RooStats
+      ROOT::HistFactory
 )
 
 # Optional dictionary if you ever need I/O for a custom class ----------------

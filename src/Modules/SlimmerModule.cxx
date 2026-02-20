@@ -1,11 +1,16 @@
 #include "Modules/SlimmerModule.hxx"
 #include "Utils/Plotter.hxx"
+#include "Utils/TimingUtils.hxx"
 
 #include <TEnv.h>
 #include <TFile.h>
 #include <TString.h>
+#include <TGraphErrors.h>
 #include <algorithm>
 #include <sstream>
+#include <TRandom.h>
+#include <unordered_map>
+#include <cmath>
 
 using namespace Analysis;
 
@@ -15,6 +20,7 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     , fTreeName     (cfg.GetValue("Slimmer.TreeName","nuselection/NeutrinoSelectionFilter"  ))
     , fRunLabel     (cfg.GetValue("Global.RunLabel","run_x") )
     , fMakePlots   (cfg.GetValue("Slimmer.MakePlots", false))
+    , fBeamSpillPeriod (cfg.GetValue("Global.BeamSpillPeriod", 18.831))
 {
 
     std::stringstream ssInput{cfg.GetValue("Slimmer.InputFiles", "")};
@@ -36,6 +42,13 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     while (ss >> item) {
         if (item.back()==',') item.pop_back();
         fVarsToKeep.push_back(item); 
+    }
+
+    std::stringstream ssLabels{cfg.GetValue("Slimmer.SampleLabels", "")};
+    std::string label;
+    while (ssLabels >> label) {
+        if (label.back()==',') label.pop_back();
+        fSampleLabels.push_back(label);
     }
 }
 
@@ -105,6 +118,7 @@ void SlimmerModule::Initialise()
     //----------------------------------------------------------------------
     int fileIndex = 0;
     for (auto df : nodes) {
+        const double beamSpillPeriod = fBeamSpillPeriod;
         std::cout << "[Slimmer] Number of entries in input file: " << df.Count().GetValue() << '\n';
         std::string fOutFile = fOutputFiles[fileIndex];
         std::cout << "[Slimmer] Will write slimmed tree to: " << fOutFile << '\n';
@@ -314,21 +328,211 @@ void SlimmerModule::Initialise()
                 int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
                 return var.empty() ? -1 : var[maxEIndex];
             },
-            {"pfnplanehits_Y", "pfnplanehits_Y"}); 
+            {"pfnplanehits_Y", "pfnplanehits_Y"})
+        .Define("pfng2shravrg_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"pfng2shravrg", "pfnplanehits_Y"})
+        .Define("pfng2mipfrac_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"pfng2mipfrac", "pfnplanehits_Y"})
+        .Define("pfng2hipfrac_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"pfng2hipfrac", "pfnplanehits_Y"})
+        .Define("pfng2bkgfrac_maxE",
+            [](VecF var, VecI E){
+                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+                return var.empty() ? -9999.0f : var[maxEIndex];
+            },
+            {"pfng2bkgfrac", "pfnplanehits_Y"})
+        .Define("reco_minus_true_time",
+            [](float recoTime, float trueTime) {
+                return recoTime - trueTime;
+            },
+            {"interaction_time_abs", "mc_interaction_time"})
+        .Define("flash_time_minus_medtt3",
+            [](float flashTime, float medTT3) {
+                return flashTime - medTT3;
+            },
+            {"flash_time_flash_matching", "Med_TT3"})
+        .Define("reconstructed_int_time_abs",
+            [](float MedTT3, float sim_time_offset) {
+                return MedTT3 + sim_time_offset;
+            },
+            {"Med_TT3", "sim_time_offset"})
+        .Filter("par_decay_vz > 70000 && par_decay_pz < 0.01")
+        .Filter("flash_time_flash_matching > -1e+36")
+        .Filter("interaction_time_abs > -10000");
+        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01") // KDAR_DUMP filter
+        //.Filter("run > 19900 && run < 20700")
+        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01"); // KDAR_DUMP filter
+        // // Run 4b good timing runs filter
+        
 
+        // Append timing-related columns onto this node and snapshot from it
+        ROOT::RDF::RNode dfOut = df1;
+        
+
+        // Special handling for timing variables
+        // Ext files have garbage times, so just add a random time within the spill window
+        if (fSampleLabels[fileIndex].find("beamoff") != std::string::npos) {
+            std::cout << "[Slimmer] Adding random timing offsets for beam-off file.\n";
+            dfOut = df1.Define(
+                "interaction_time_merged",
+                [beamSpillPeriod](float /*time*/) {
+                    const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
+                    return random_offset;
+                },
+                {"interaction_time_abs"}
+            );
+        }
+        else if (fSampleLabels[fileIndex].find("data") != std::string::npos ||
+                 fSampleLabels[fileIndex].find("overlay") != std::string::npos ||
+                 fSampleLabels[fileIndex].find("signal") != std::string::npos) {
+            auto run_numbers = df1.Take<int>("run").GetValue();
+            auto times_f     = df1.Take<float>("interaction_time_abs").GetValue();
+            std::cout << "[Slimmer] Fitting timing offsets for " << run_numbers.size() << " events.\n";
+            std::vector<double> times;
+            times.reserve(times_f.size());
+            for (const float t : times_f) times.push_back(static_cast<double>(t));
+            std::cout << "[Slimmer] Creating run offset map.\n";
+            std::unordered_map<int, std::pair<double, double>> runOffsetMap =
+                Analysis::TimingUtils::CreateRunOffsetMap(
+                    run_numbers,
+                    times,
+                    beamSpillPeriod,
+                    1,  // K
+                    50  // runWindowSize
+                );
+            std::cout << "[Slimmer] Created run offset map with " << runOffsetMap.size() << " entries.\n";
+            auto runOffsetMapPtr = std::make_shared<const std::unordered_map<int, std::pair<double, double>>>(std::move(runOffsetMap));
+            for (const auto& [run, offset] : *runOffsetMapPtr) {
+                std::cout << "[Slimmer] Run " << run << " has timing offset: " << offset.first << " ns (uncertainty: " << offset.second << " ns)\n";
+            }
+
+            // Scatter plot of run vs timing offset
+            std::vector<double> runs;
+            std::vector<double> offsets;
+            std::vector<double> uncertainties;
+
+            runs.reserve(runOffsetMapPtr->size());
+            offsets.reserve(runOffsetMapPtr->size());
+            uncertainties.reserve(runOffsetMapPtr->size());
+
+            for (const auto& [run, offset] : *runOffsetMapPtr) {
+                runs.push_back(static_cast<double>(run));
+                offsets.push_back(offset.first);
+                uncertainties.push_back(offset.second);
+            }
+
+            // Make scatter plot
+            auto c = std::make_unique<TCanvas>("c_run_offset", "Run vs timing offset", 800, 600);
+
+            std::vector<double> xerr(runs.size(), 0.0);
+            auto g = std::make_unique<TGraphErrors>(
+                static_cast<int>(runs.size()),
+                runs.data(),
+                offsets.data(),
+                xerr.data(),
+                uncertainties.data()
+            );
+
+            g->SetTitle("Timing offset vs run;Run number;Timing offset [ns]");
+            g->SetMarkerStyle(20);
+            g->SetMarkerSize(0.9);
+            g->SetMarkerColor(kBlue+1);
+
+            g->Draw("AP");
+
+            c->SaveAs(("timing_offset_vs_run_" + fSampleLabels[fileIndex] + ".pdf").c_str());
+
+
+            std::cout << "[Slimmer] Applying run-by-run timing offsets for data file.\n";
+            dfOut = df1
+                .Define(
+                    "interaction_time_merged",
+                    [beamSpillPeriod, runOffsetMapPtr](float time, int run) {
+                        // Wrap into spill period
+                        const auto it = runOffsetMapPtr->find(run);
+                        const double offset = (it == runOffsetMapPtr->end()) ? 0.0 : it->second.first;
+                        //std::cout << "[Slimmer] Run " << run << " applying offset: " << offset << " ns\n";
+                        double time_corrected = time - offset;
+                        double wrappedTime = std::fmod(time_corrected, beamSpillPeriod);
+                        if (wrappedTime < 0) wrappedTime += beamSpillPeriod;
+                        return wrappedTime;
+                    },
+                    {"interaction_time_abs", "run"}
+                );
+        }
+        else {
+            // For non-data, just wrap into spill period
+            std::cout << "[Slimmer] Wrapping timing for non-data or ext file.\n";
+            dfOut = df1.Define(
+                "interaction_time_merged",
+                [beamSpillPeriod](float time) {
+                    double wrappedTime = std::fmod(static_cast<double>(time), beamSpillPeriod);
+                    if (wrappedTime < 0) wrappedTime += beamSpillPeriod;
+                    return wrappedTime;
+                },
+                {"interaction_time_abs"}
+            );
+        }
+        
+
+
+
+
+
+        
         ROOT::RDF::RSnapshotOptions opt;
         opt.fMode = "RECREATE";
         opt.fCompressionAlgorithm = ROOT::kZLIB;
         opt.fCompressionLevel     = 4;
 
-        df1.Snapshot(fTreeName, fOutFile, fVarsToKeep, opt);
+        std::cout << "[Slimmer] Writing slimmed tree to file: " << fOutFile << '\n';
+
+        //Test if interaction_time_merged exists
+        auto cols = dfOut.GetColumnNames();
+        const bool has =
+        std::find(cols.begin(), cols.end(), "interaction_time_merged") != cols.end();
+
+        std::cout << "[Slimmer] dfOut has interaction_time_merged? " << has << "\n";
+        std::cout << "[Slimmer] Variables to keep in slimmed tree:\n";
+        for (const auto& var : fVarsToKeep) {
+            std::cout << "  " << var << "\n";
+        }
+
+        dfOut.Snapshot(fTreeName, fOutFile, fVarsToKeep, opt);
 
         if (fMakePlots) {
             std::cout << "Creating plots for file: " << fOutFile << std::endl;
             Plotter::SaveHist(
-                df1.Histo1D({"sub_hist", ";run_number;Count", 50, 0, 600}, "sub").GetPtr(),
+                dfOut.Histo1D({"sub_hist", ";run_number;Count", 50, 0, 600}, "sub").GetPtr(),
                 "slimmer_"+fRunLabel+"_run_histogram" , "prelim");
-
+            Plotter::SaveHist(
+                dfOut.Histo1D({"par_decay_vz_hist", ";Kaon Decay Vertex Z [cm];Count", 50, 0, 75000}, "par_decay_vz").GetPtr(),
+                "slimmer_"+fRunLabel+"_kaon_decay_vz_histogram" , "prelim");
+            Plotter::SaveHist(
+                dfOut.Histo1D({"par_decay_pz_hist", ";Kaon Decay Pz [GeV];Count", 50, 0, 12}, "par_decay_pz").GetPtr(),
+                "slimmer_"+fRunLabel+"_kaon_decay_pz_histogram" , "prelim");
+            Plotter::SaveHist(
+                dfOut.Histo1D({"reco_minus_true_t_hist", ";Reconstructed - True Time [ns];Count", 100, 4000, 4200}, "reco_minus_true_time").GetPtr(),
+                "slimmer_"+fRunLabel+"_reco_minus_true_t_histogram" , "prelim");
+            Plotter::SaveHist(
+                dfOut.Histo1D({"pmt_time_hist", ";PMT Time [ns];Count", 100, 0, 20}, "pmt_time").GetPtr(),
+                "slimmer_"+fRunLabel+"_pmt_time_histogram" , "prelim");
+            std::cout << "[Slimmer] Checking if mc_interaction_time column exists for plotting...\n";
+            Plotter::SaveHist(
+                dfOut.Histo1D({"mc_interaction_time_hist", ";True Interaction Time [ns];Count", 1000, -10000, 20000}, "mc_interaction_time").GetPtr(),
+                "slimmer_"+fRunLabel+"_mc_interaction_time_histogram" , "prelim");
         }
 
         fileIndex++;

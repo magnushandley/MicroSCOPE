@@ -36,6 +36,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fDataPOT    (cfg.GetValue("HistFitModule.DataPOT", 1.0e20))
     , fSignalPOT  (cfg.GetValue("HistFitModule.SignalPOT", 1.0e20)) // We only need data and signal POT because the backgrounds are scaled to data POT anyway
     , fSimulatedSignalU2(cfg.GetValue("HistFitModule.SimulatedSignalU2", 1.0e-4))
+    , fBlindData  (cfg.GetValue("HistFitModule.BlindData", false))
 {
 
     std::stringstream ssInput{cfg.GetValue("HistFitModule.InputFiles", "")};
@@ -76,10 +77,12 @@ HistFitModule::BuildDataFrames(const std::vector<std::string>& files,
     //std::vector<std::unique_ptr<ROOT::RNode>> dfVec;
 
     //Because we need to filter, the return type is an RNode
+    std::cout << "Debug 1" << std::endl;
     std::vector<ROOT::RDF::RNode> nodes;
     std::cout << "[HistFitModule] Building DataFrames for " << files.size() << " input files\n";
     nodes.reserve(files.size());
     std::cout << "[HistFitModule] Nodes size reserved: " << nodes.size() << std::endl;
+    std::cout << "Debug 2" << std::endl;
 
     int it = 0;
     for (const auto& fname : files) {
@@ -185,7 +188,9 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     
     meas.SetLumi(1.0);
     //meas.SetLumiRelErr(0.3); // Investigate impact of this
-    //meas.SetBinHigh(2); // Investigate impact of this
+    //meas.SetBinLow(16); // Investigate impact of this
+    //int nBins = histVec[0].GetNbinsX();
+    //meas.SetBinHigh(nBins); // Investigate impact of this
 
     // Create a channel
 
@@ -234,11 +239,11 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
 
     // Background 3
     //TH1D& h3 = histVec[2];
-    RooStats::HistFactory::Sample background3(labels[2], labels[2], inputFile);
+    //RooStats::HistFactory::Sample background3(labels[2], labels[2], inputFile);
     //background3.SetHisto(&h3);
-    background3.ActivateStatError();
+    //background3.ActivateStatError();
     //background3.AddOverallSys("syst3", 0.95, 1.05);
-    chan.AddSample(background3);
+    //chan.AddSample(background3);
 
     std::cout << "[HistFitModule] Background 3 sample added" << std::endl;
 
@@ -299,6 +304,45 @@ Long64_t HistFitModule::EntryCount() const
     return 1; // Dummy, nothing per-event
 }
 
+double HistFitModule::BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
+    std::vector<std::string> sampleLabels,
+    std::vector<double> sampleWeights,
+    double signalBinThreshold) const
+{
+    // Simple sensitivity estimate based on S/sqrt(B) in the high scoring region of the BDT score histogram
+    
+    double signalCount = 0.0;
+    double bkgCount = 0.0;
+
+    for (size_t i = 0; i < bdtScoreVec.size(); ++i) {
+        const TH1D& hist = bdtScoreVec[i];
+        const std::string &label = sampleLabels[i];
+        const bool isSignal = (label.find("signal") != std::string::npos);
+        const bool isData   = (label.find("data")   != std::string::npos);
+        const double weight = sampleWeights[i];
+
+        // Sum entries above the threshold
+        for (int bin = 1; bin <= hist.GetNbinsX(); ++bin) {
+            double binCenter = hist.GetBinCenter(bin);
+            if (binCenter >= signalBinThreshold) {
+                double binContent = hist.GetBinContent(bin) * weight;
+                if (isSignal) {
+                    signalCount += binContent;
+                } else if (isData) {
+                    // Do nothing for data
+                } else {
+                    bkgCount += binContent;
+                }
+            }
+        }
+    }
+
+    std::cout << "Basic sensitivity estimate: Signal count = " << signalCount
+              << ", Background count = " << bkgCount << std::endl;
+    double sensitivity = signalCount / std::sqrt(bkgCount);
+    return sensitivity;
+
+}
 
 //------------------------------------------------------------------------------
 
@@ -313,6 +357,8 @@ void HistFitModule::Initialise()
         sampleWeights.push_back(fSampleWeights[i]/std::abs(fTestFractions[i]));
     }
 
+    std::cout << "Debug 3" << std::endl;
+
     // Raw BDT scores are saved as "bdt_score", with a range of -1 to 1
     // We apply the logit transformation to spread out high bdt scores
 
@@ -325,10 +371,12 @@ void HistFitModule::Initialise()
             {"bdt_score"});
     }
 
+    std::cout << "Debug 4" << std::endl;
+
     //Want to initialise histograms based on the maximum value of overlay/data
     
     double maxBkg = 10.0; //initial high value
-    for (int i=1; i < 5; ++i){
+    for (int i=1; i < RNodes.size(); ++i){
         auto maxInRNode = RNodes[i].Max("logit_bdt").GetValue();
         if (maxInRNode < maxBkg) maxBkg = maxInRNode;
     }
@@ -342,9 +390,28 @@ void HistFitModule::Initialise()
                 "logit_bdt", 
                 "Logit BDT Score",
                 "Count",
-                9.0, -5.0, 4.0,
+                10.0, -5.0, 5.0,
                 false, // removeVectorDuplicates
                 true));   // createOverFlowBin
+
+    //Scale every element by rate scaling and every bin error by sqrt(rate scaling)
+    std::vector<TH1D> bdtScoreVecFakeScaling;
+    double rateScaling = 1.0;
+    for (size_t i = 0; i < RNodes.size(); ++i){
+        TH1D hOriginal = bdtScoreVec[i];
+        TH1D hScaled = hOriginal;
+        for (int bin = 1; bin <= hOriginal.GetNbinsX(); ++bin){
+            double originalBinContent = hOriginal.GetBinContent(bin);
+            double originalBinError = hOriginal.GetBinError(bin);
+            double scaledBinContent = originalBinContent * rateScaling;
+            double scaledBinError = originalBinError * sqrt(rateScaling);
+            hScaled.SetBinContent(bin, scaledBinContent);
+            hScaled.SetBinError(bin, scaledBinError);
+        }
+        bdtScoreVecFakeScaling.push_back(hScaled);
+    }
+
+    std::cout << "Debug 5" << std::endl;
 
     // TEST OF CLS INFRASTRUCTURE - manually set data histogram to be the sum of bkgd histograms
     
@@ -384,24 +451,36 @@ void HistFitModule::Initialise()
     //bdtScoreVec[bdtScoreVec.size() - 1] = fakeDataHist;
 
     // End of test code
+
+    std::cout << "Debug 7" << std::endl;
              
-    HistFitModule::SaveHistograms(bdtScoreVec, fSampleLabels, sampleWeights, "bdt_score_histograms_tmp_4.root");
+    HistFitModule::SaveHistograms(bdtScoreVecFakeScaling, fSampleLabels, sampleWeights, "bdt_score_histograms_tmp_4.root");
 
     //std::vector<double> placeholderweights = {1.0, 1.0, 1.0, 1.0, 1.0};
-    Plotter::FullDataMCSignalPlot(bdtScoreVec,
+
+    Plotter::BlindedMCSignalPlot(bdtScoreVecFakeScaling,
                         fSampleLabels,
-                        "bdt_score_full_hist_tmva_histfitmodule",
+                        "bdt_score_blinded_hist_tmva_histfitmodule",
                         false, // logy
-                        sampleWeights);
+                        sampleWeights); // blinded data
 
     // Save histograms to temp file to match implementation in the RooFit examples. Could maybe
     // be done directly in memory but right now it's nice to verify you're passing in correctly
     // weighted histograms by saving them with weights applied, and this allows you to manually
     // inspect the saved histograms and errors too.
-    
 
 
-    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVec, fSampleLabels, "bdt_score_histograms_tmp_4.root");
+    double sensitivity = BasicSensitivityEstimate(bdtScoreVec,
+        fSampleLabels,
+        sampleWeights,
+        3.0); // signal bin threshold
+
+    std::cout << "Estimated basic sensitivity (S/sqrt(B)) in logit BDT > 3.0 region: " << sensitivity << std::endl;
+
+    std::cout << "Debug 8" << std::endl;
+
+
+    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVecFakeScaling, fSampleLabels, "bdt_score_histograms_tmp_4.root");
     //RooStats::ModelConfig* sbModel = GetSPlusBModel(ws.get());
     //RooStats::ModelConfig* bModel = GetBOnlyModel(ws.get());
     
@@ -457,6 +536,8 @@ void HistFitModule::Initialise()
 
         // All the above is legacy code from the example, kept for reference for now.
 
+    std::cout << "HypoTestInverter starting..." << std::endl;
+
     ws->Print();
     RooAbsData* data = ws->data("obsData");
     RooStats::ModelConfig* sbModel = (RooStats::ModelConfig*) ws->obj("ModelConfig");
@@ -479,7 +560,12 @@ void HistFitModule::Initialise()
         
     RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
 
-    std::cout << 100*inverter.ConfidenceLevel() << "%  upper limit : " << result->UpperLimit() << std::endl;
+    if (!fBlindData){
+        std::cout << 100*inverter.ConfidenceLevel() << "%  upper limit : " << result->UpperLimit() << std::endl;
+    }
+    else{
+        std::cout << "Data is blinded, not showing observed limit." << std::endl;
+    }
 
     std::cout << "Expected upper limits, using the B (alternate) model : " << std::endl;
     std::cout << " expected limit (median) " << result->GetExpectedUpperLimit(0) << std::endl;
@@ -488,16 +574,38 @@ void HistFitModule::Initialise()
     std::cout << " expected limit (-2 sig) " << result->GetExpectedUpperLimit(-2) << std::endl;
     std::cout << " expected limit (+2 sig) " << result->GetExpectedUpperLimit(2) << std::endl;
 
-    std::cout << "Converting to U^2 limits: " << std::endl;
-    double clsU2 = CLsOutputToU2(result->UpperLimit(), fSimulatedSignalU2, fDataPOT, fSignalPOT);
-    std::cout << " Observed U^2 limit: " << clsU2 << std::endl;
+    if (!fBlindData){
+        std::cout << "Converting to U^2 limits: " << std::endl;
+        double clsU2 = CLsOutputToU2(result->UpperLimit(), fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        std::cout << " Observed U^2 limit: " << clsU2 << std::endl;
 
-    TCanvas* c_limit = new TCanvas("c_limit", "HypoTestInverter Result", 800, 600);
-    RooStats::HypoTestInverterPlot* plot = new RooStats::HypoTestInverterPlot("HTI_Result_Plot","HypoTest Scan Result",result);
-    plot->Draw("CLb 2CL");  // plot also CLb and CLs+b
-    c_limit->SetLogy();
-    c_limit->Draw();
-    c_limit->SaveAs("hypotestinverter_result_histfitmodule.png");
+        TCanvas* c_limit = new TCanvas("c_limit", "HypoTestInverter Result", 800, 600);
+        RooStats::HypoTestInverterPlot* plot = new RooStats::HypoTestInverterPlot("HTI_Result_Plot","HypoTest Scan Result",result);
+        plot->Draw("CLb 2CL");  // plot also CLb and CLs+b
+        c_limit->SetLogy();
+        c_limit->Draw();
+        c_limit->SaveAs("hypotestinverter_result_histfitmodule.png");
+    }
+    else{
+        //Median expected limit plot only
+        double expectedLimit = result->GetExpectedUpperLimit(0);        
+        double expectedLimitMinus1Sigma = result->GetExpectedUpperLimit(-1);
+        double expectedLimitPlus1Sigma = result->GetExpectedUpperLimit(1);
+        double expectedLimitMinus2Sigma = result->GetExpectedUpperLimit(-2);
+        double expectedLimitPlus2Sigma = result->GetExpectedUpperLimit(2);
+        std::cout << "Converting expected limits to U^2: " << std::endl;
+        std::cout << "Simulated POT: " << fSignalPOT << ", Data POT: " << fDataPOT << ", Simulated U^2: " << fSimulatedSignalU2 << std::endl;
+        double clsU2 = CLsOutputToU2(expectedLimit, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2Minus1Sigma = CLsOutputToU2(expectedLimitMinus1Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2Plus1Sigma = CLsOutputToU2(expectedLimitPlus1Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2Minus2Sigma = CLsOutputToU2(expectedLimitMinus2Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2Plus2Sigma = CLsOutputToU2(expectedLimitPlus2Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        std::cout << " Expected U^2 limit (median): " << clsU2 << std::endl;
+        std::cout << " Expected U^2 limit (-1 sigma): " << clsU2Minus1Sigma << std::endl;
+        std::cout << " Expected U^2 limit (+1 sigma): " << clsU2Plus1Sigma << std::endl;
+        std::cout << " Expected U^2 limit (-2 sigma): " << clsU2Minus2Sigma << std::endl;
+        std::cout << " Expected U^2 limit (+2 sigma): " << clsU2Plus2Sigma << std::endl;
+    }
 }
 
 void HistFitModule::Finalise()

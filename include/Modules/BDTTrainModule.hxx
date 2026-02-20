@@ -32,7 +32,7 @@ private:
 
      // Helper: Creates temporary snapshots to disk with training and testing samples, and weights added as new branch. 
      // returns the filenames of train_signal, train_bkg, test_signal, test_bkg files.                                           
-    std::vector<std::string> BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs, std::vector<std::string> sampleLabels, std::vector<double> sampleWeights, float testFraction) const;
+    std::vector<std::string> BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs, std::vector<std::string> sampleLabels, std::vector<double> sampleWeights, std::vector<double> trainFractions) const;
     // Build a TMVA BDT option string
     std::string BuildMethodString(int nTrees,
                                   int maxDepth,
@@ -65,7 +65,7 @@ private:
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::vector<std::string> fTrainVars;///< variables to use for training
-    float fTrainFraction; ///< Fraction of events to use for training (rest for testing)
+    std::vector<double> fTrainFractions; ///< Fraction of events to use for training (rest for testing)
     std::string fBDTWeightsDir; ///< Directory to save the BDT weights XML files
 
     /// Working objects
