@@ -34,7 +34,7 @@ public:
     //  Single-histogram helpers
     // ------------------------------------------------------------------
     
-    static TH1D CreateTH1DFromRNode(
+        static TH1D CreateTH1DFromRNode(
         ROOT::RDF::RNode node,
         const std::string& name,
         const std::string& varName,
@@ -44,7 +44,8 @@ public:
         double xMin,
         double xMax,
         bool removeVectorDuplicates = false,
-        bool createOverFlowBin = false);
+        bool createOverFlowBin = false,
+        std::string weightCol = "");
 
     /** Draw a TH1 and write <basename>.png + .pdf into the current dir. */
     static void SaveHist(TH1* h,
@@ -63,11 +64,13 @@ public:
                         const std::vector<double> weights = {});
 
     static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
-                                      const std::vector<std::string>& labels,
-                                      const std::string& basename,
-                                      bool logy = false,
-                                      const std::vector<double> weights = {},
-                                      bool blindedData = false);
+                    const std::vector<std::string>& labels,
+                    const std::string& basename,
+                    bool logy,
+                    const std::vector<double> weights,
+                    double ratioYMin = 0.7,
+                    double ratioYMax = 1.3,
+                    const TH1D* bkgSysVarHist = nullptr);
 
     static void BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
                           const std::vector<std::string>& labels,

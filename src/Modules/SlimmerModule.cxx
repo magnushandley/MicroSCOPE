@@ -353,24 +353,12 @@ void SlimmerModule::Initialise()
                 return var.empty() ? -9999.0f : var[maxEIndex];
             },
             {"pfng2bkgfrac", "pfnplanehits_Y"})
-        .Define("reco_minus_true_time",
-            [](float recoTime, float trueTime) {
-                return recoTime - trueTime;
-            },
-            {"interaction_time_abs", "mc_interaction_time"})
-        .Define("flash_time_minus_medtt3",
-            [](float flashTime, float medTT3) {
-                return flashTime - medTT3;
-            },
-            {"flash_time_flash_matching", "Med_TT3"})
-        .Define("reconstructed_int_time_abs",
-            [](float MedTT3, float sim_time_offset) {
-                return MedTT3 + sim_time_offset;
-            },
-            {"Med_TT3", "sim_time_offset"})
-        .Filter("par_decay_vz > 70000 && par_decay_pz < 0.01")
-        .Filter("flash_time_flash_matching > -1e+36")
-        .Filter("interaction_time_abs > -10000");
+        .Filter("!(par_decay_vz > 70000 && par_decay_pz < 0.01)");
+        //.Filter("flash_time_flash_matching > -1e+36");
+        //.Filter("interaction_time_abs > -10000")
+        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01")
+        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01");
+        //.Filter("interaction_time_abs > -10000");
         //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01") // KDAR_DUMP filter
         //.Filter("run > 19900 && run < 20700")
         //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01"); // KDAR_DUMP filter
@@ -389,14 +377,14 @@ void SlimmerModule::Initialise()
                 "interaction_time_merged",
                 [beamSpillPeriod](float /*time*/) {
                     const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
+                    //std::cout << "[Slimmer] Assigned random timing offset for beam-off event: " << random_offset << " ns\n";
                     return random_offset;
                 },
                 {"interaction_time_abs"}
             );
         }
-        else if (fSampleLabels[fileIndex].find("data") != std::string::npos ||
-                 fSampleLabels[fileIndex].find("overlay") != std::string::npos ||
-                 fSampleLabels[fileIndex].find("signal") != std::string::npos) {
+        else if (fSampleLabels[fileIndex].find("data") != std::string::npos || fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
+            std::cout << "[Slimmer] Fitting timing offsets for data file.\n";
             auto run_numbers = df1.Take<int>("run").GetValue();
             auto times_f     = df1.Take<float>("interaction_time_abs").GetValue();
             std::cout << "[Slimmer] Fitting timing offsets for " << run_numbers.size() << " events.\n";
@@ -410,7 +398,7 @@ void SlimmerModule::Initialise()
                     times,
                     beamSpillPeriod,
                     1,  // K
-                    50  // runWindowSize
+                    2000  // runWindowSize
                 );
             std::cout << "[Slimmer] Created run offset map with " << runOffsetMap.size() << " entries.\n";
             auto runOffsetMapPtr = std::make_shared<const std::unordered_map<int, std::pair<double, double>>>(std::move(runOffsetMap));
@@ -485,12 +473,52 @@ void SlimmerModule::Initialise()
                 {"interaction_time_abs"}
             );
         }
-        
 
+        std::cout << "[Slimmer] Added interaction_time_merged variable.\n";
 
-
-
-
+        if (fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
+            // Temporary way to add in central value weights for overlay and dirt, otherwise set to 1.0, should do this by label in future
+            dfOut = dfOut.Define("weight_cv",
+                [](float w1, float w2, int npi0) {
+                    float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
+                    float safeWeight2 = (w2 > 0.0f && !std::isnan(w2) && !std::isinf(w2) && w2 < 100) ? w2 : 1.0f;
+                    if (npi0 > 0) {
+                        safeWeight2 = safeWeight2 * 0.759; // Scaling on files with pi0's, as done by David
+                    }
+                    return safeWeight1 * safeWeight2;
+                }, {"weightSplineTimesTune", "ppfx_cv", "npi0"})
+                .Define("weight_cv_untuned",
+                [](float w1, float w2, int npi0) {
+                    float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
+                    float safeWeight2 = (w2 > 0.0f && !std::isnan(w2) && !std::isinf(w2) && w2 < 100) ? w2 : 1.0f;
+                    if (npi0 > 0) {
+                        safeWeight2 = safeWeight2 * 0.759; // Scaling on files with pi0's, as done by David
+                    }
+                    return safeWeight1 * safeWeight2;
+                }, {"weightSpline", "ppfx_cv", "npi0"})
+                .Define("weight_cv_nosplineortune",
+                [](float w, int npi0) {
+                    float safeWeight = (w > 0.0f && !std::isnan(w) && !std::isinf(w) && w < 100) ? w : 1.0f;
+                    if (npi0 > 0) {
+                        safeWeight = safeWeight * 0.759; // Scaling on files with pi0's, as done by David
+                    }
+                    return safeWeight;
+                }, {"ppfx_cv", "npi0"})
+                .Define("weight_cv_noppfx",
+                [](float w1, int npi0) {
+                    float safeWeight = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
+                    if (npi0 > 0) {
+                        safeWeight = safeWeight * 0.759; // Scaling on files with pi0's, as done by David
+                    }
+                    return safeWeight;
+                }, {"weightSplineTimesTune", "npi0"});
+        }
+        else {
+            dfOut = dfOut.Define("weight_cv",
+                []() {
+                    return 1.0f;
+                });
+        }
         
         ROOT::RDF::RSnapshotOptions opt;
         opt.fMode = "RECREATE";
@@ -500,11 +528,11 @@ void SlimmerModule::Initialise()
         std::cout << "[Slimmer] Writing slimmed tree to file: " << fOutFile << '\n';
 
         //Test if interaction_time_merged exists
-        auto cols = dfOut.GetColumnNames();
-        const bool has =
-        std::find(cols.begin(), cols.end(), "interaction_time_merged") != cols.end();
+        //auto cols = dfOut.GetColumnNames();
+        //const bool has =
+        //std::find(cols.begin(), cols.end(), "interaction_time_merged") != cols.end();
 
-        std::cout << "[Slimmer] dfOut has interaction_time_merged? " << has << "\n";
+        //std::cout << "[Slimmer] dfOut has interaction_time_merged? " << has << "\n";
         std::cout << "[Slimmer] Variables to keep in slimmed tree:\n";
         for (const auto& var : fVarsToKeep) {
             std::cout << "  " << var << "\n";

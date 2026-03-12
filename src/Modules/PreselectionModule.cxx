@@ -1,5 +1,6 @@
 #include "Modules/PreselectionModule.hxx"
 #include "Utils/Plotter.hxx"
+#include "Utils/SystematicsUtil.hxx"
 
 #include <TEnv.h>
 #include <TFile.h>
@@ -158,6 +159,13 @@ void PreselectionModule::Initialise()
 
     // Now we can write each filtered RNode to a new TTree in the output file
 
+    // --------------------------------------------------------------------
+    // Plotting infrastructure
+    //   - Define all histogram "recipes" once
+    //   - Fill them per-sample from the filtered RNodes
+    //   - Plot them in a single loop at the end
+    // --------------------------------------------------------------------
+
     std::vector<TH1D> preSelectednpfpsVec;
     std::vector<TH1D> preSelectednTracksVec;
     std::vector<TH1D> preSelectedNuE2Vec;
@@ -172,12 +180,6 @@ void PreselectionModule::Initialise()
     std::vector<TH1D> preSelectedShrPhivVec;
     std::vector<TH1D> preSelectedShrFitPzFracVec;
     std::vector<TH1D> preSelectedShrFitThetaVec;
-    std::vector<TH1D> pfng2shravrg_maxEVec;
-    std::vector<TH1D> preSelectedpfng2mipfrac_maxEVec;
-    std::vector<TH1D> preSelectedpfng2hipfrac_maxEVec;
-    std::vector<TH1D> preSelectedpfng2bkgfrac_maxEVec;
-    std::vector<TH1D> preSelectedMergedTimeVec;
-    std::vector<TH1D> preSelectedInteractionTimeVec;
     std::vector<TH1D> preSelectedUPlaneHitsVec;
     std::vector<TH1D> preSelectedVPlaneHitsVec;
     std::vector<TH1D> preSelectedYPlaneHitsVec;
@@ -187,510 +189,171 @@ void PreselectionModule::Initialise()
     std::vector<TH1D> preSelectedTrkFitThetaMaxEVec;
     std::vector<TH1D> preSelectedTrkFitPzFracMaxEVec;
     std::vector<TH1D> preSelectedTrkPhivMaxEVec;
-    std::vector<TH1D> preSelectedpi0MassYVec;
-    std::vector<TH1D> preselectedFlashTimeVec;
+    std::vector<TH1D> preSelectedMergedTimeVec;
+    //std::vector<TH1D> preSelectedpi0MassYVec;
+
+    struct HistSpec {
+        std::vector<TH1D>* vec;
+        std::string        histNamePrefix;   // e.g. "preselection_hist_npfps_"
+        std::string        colName;
+        std::string        xTitle;
+        std::string        yTitle;
+        int                nBins;
+        double             xMin;
+        double             xMax;
+        bool               isAngle;
+        bool               removeVectorDuplicates;
+        std::string        fullPlotName;     // e.g. "preselection_full_hist_npfps"
+        bool               logY;
+        std::vector<TH1D>  systVarianceHists; //Histograms with systematic variances per bin
+    };
+
+    SystematicsConfig systConfig;
+    systConfig.genieMultisimBranch = "weightsGenie";
+    systConfig.genieCVWeightBranch = "weight_cv_untuned";
+    systConfig.genieGlobalCVWeightBranch = "weight_cv";
+    systConfig.ppfxMultisimBranch = "weightsPPFX";
+    systConfig.ppfxCVWeightBranch = "weight_cv_noppfx";
+    systConfig.ppfxGlobalCVWeightBranch = "weight_cv";
+    systConfig.reintMultisimBranch = "weightsReint";
+    systConfig.reintCVWeightBranch = "weight_cv";
+    systConfig.reintGlobalCVWeightBranch = "weight_cv";
+
+    // Define all histogram specifications in one place
+    std::vector<HistSpec> histSpecs;
+    histSpecs.reserve(32);
+    //histSpecs.push_back({&preSelectednpfpsVec,            "preselection_hist_npfps_",             "n_pfps",             "Number of PFParticles",                 "Count",  5,  0.5,  5.5,  false, false, "preselection_full_hist_npfps",             false});
+    //histSpecs.push_back({&preSelectednTracksVec,          "preselection_hist_nTracks_",           "n_tracks",           "Number of Tracks",                      "Count",  5,  0.5,  5.5,  false, false, "preselection_full_hist_nTracks",           false});
+    histSpecs.push_back({&preSelectedNuE2Vec,             "preselection_hist_NeutrinoEnergy2_",   "NeutrinoEnergy2",     "Neutrino Energy [MeV]",                 "Count", 20,  0.0,  500.0,false, false, "preselection_full_hist_NeutrinoEnergy2",   false});
+    //histSpecs.push_back({&preSelectedSliceCaloE2Vec,      "preselection_hist_SliceCaloE2_",       "SliceCaloEnergy2",    "Slice Calorimetric Energy [MeV]",        "Count", 20,  0.0,  500.0,false, false, "preselection_full_hist_SliceCaloE2",       false});
+    //histSpecs.push_back({&preSelectedShrdedxmaxVec,       "preselection_hist_Shrdedxmax_",        "shr_tkfit_dedx_max",  "Max Shower dE/dx [MeV/cm]",             "Count", 20,  0.0,  10.0, false, false, "preselection_full_hist_Shrdedxmax",        false});
+    //histSpecs.push_back({&preSelectedShrETotVec,          "preselection_hist_ShrETot_",           "shr_energy_tot",      "Total Shower Energy [MeV]",              "Count", 20,  0.0,  0.25, false, false, "preselection_full_hist_ShrETot",           false});
+    //histSpecs.push_back({&preSelectedTrkETotVec,          "preselection_hist_TrkETot_",           "trk_energy_tot",      "Total Track Energy [MeV]",               "Count", 20,  0.0,  0.75, false, false, "preselection_full_hist_TrkETot",           false});
+    //histSpecs.push_back({&preSelectedMaxTrkEVec,          "preselection_hist_MaxTrkE_",           "trk_energy",          "Max Track Energy [MeV]",                 "Count", 20,  0.0,  500.0,false, false, "preselection_full_hist_MaxTrkE",           false});
+    //histSpecs.push_back({&preSelectedShrClusDir2Vec,      "preselection_hist_ShrClusDir2_",       "shrclusdir2",         "Average Shower Cluster Direction [degrees]","Count",20,  0.0,  360.0,false, false, "preselection_full_hist_ShrClusDir2",       false});
+    //histSpecs.push_back({&preSelectedFlashMatchScoreVec,  "preselection_hist_FlashMatchScore_",   "nu_flashmatch_score", "Flash Match Score",                      "Count", 30,  0.0,  30.0, false, false, "preselection_full_hist_FlashMatchScore",   false});
+    //histSpecs.push_back({&preSelectedTopologicalScoreVec, "preselection_hist_TopologicalScore_",  "topological_score",   "Topological Score",                      "Count", 30,  0.0,  1.0,  false, false, "preselection_full_hist_TopologicalScore",  false});
+    //histSpecs.push_back({&preSelectedShrPhivVec,          "preselection_hist_ShrPhiv_",           "shr_phi_v",           "Shr Phi [rad]",                          "Count", 20, -3.14, 3.14, true,  false, "preselection_full_hist_ShrPhiv",           false});
+    //histSpecs.push_back({&preSelectedShrFitPzFracVec,     "preselection_hist_ShrFitPzFrac_",      "shr_pz_v",            "Shr Fit Pz Frac",                        "Count", 20, -1.0,  1.0,  true,  false, "preselection_full_hist_ShrFitPzFrac",      false});
+    //histSpecs.push_back({&preSelectedShrFitThetaVec,      "preselection_hist_ShrFitTheta_",       "shr_theta_v",         "Shr Fit Theta [rad]",                    "Count", 20,  0.0,  3.14, true,  false, "preselection_full_hist_ShrFitTheta",       false});
+    //histSpecs.push_back({&preSelectedUPlaneHitsVec,       "preselection_hist_UPlaneHits_",        "pfnplanehits_U",      "Number of U Plane Hits",                 "Count", 30,  0.0,  300.0,false, false, "preselection_full_hist_UPlaneHits",        false});
+    //histSpecs.push_back({&preSelectedVPlaneHitsVec,       "preselection_hist_VPlaneHits_",        "pfnplanehits_V",      "Number of V Plane Hits",                 "Count", 30,  0.0,  300.0,false, false, "preselection_full_hist_VPlaneHits",        false});
+    //histSpecs.push_back({&preSelectedYPlaneHitsVec,       "preselection_hist_YPlaneHits_",        "pfnplanehits_Y",      "Number of Y Plane Hits",                 "Count", 30,  0.0,  300.0,false, false, "preselection_full_hist_YPlaneHits",        false});
+    //histSpecs.push_back({&preSelectedShrFitThetaMaxEVec,  "preselection_hist_ShrFitThetaMaxE_",   "shr_theta_v_maxE",    "Shr Fit Theta (max E object) [rad]",     "Count", 20,  0.0,  3.14, false, false, "preselection_full_hist_ShrFitThetaMaxE",   false});
+    histSpecs.push_back({&preSelectedShrFitPzFracMaxEVec, "preselection_hist_ShrFitPzFracMaxE_",  "shr_pz_v_maxE",       "Shr Fit Pz Frac (max E object)",         "Count", 20, -1.0,  1.0,  false, false, "preselection_full_hist_ShrFitPzFracMaxE",  false});
+    //histSpecs.push_back({&preSelectedShrPhivMaxEVec,      "preselection_hist_ShrPhivMaxE_",       "shr_phi_v_maxE",      "Shr Phi (max E object) [rad]",           "Count", 20, -3.14, 3.14, false, false, "preselection_full_hist_ShrPhivMaxE",       false});
+    //histSpecs.push_back({&preSelectedTrkFitThetaMaxEVec,  "preselection_hist_TrkFitThetaMaxE_",   "trk_theta_v_maxE",    "Track Fit Theta (max E object) [rad]",   "Count", 20,  0.0,  3.14, false, false, "preselection_full_hist_TrkFitThetaMaxE",   false});
+    //histSpecs.push_back({&preSelectedTrkFitPzFracMaxEVec, "preselection_hist_TrkFitPzFracMaxE_",  "trk_dir_z_v_maxE",    "Track Fit Pz Frac (max E object)",       "Count", 20, -1.0,  1.0,  false, false, "preselection_full_hist_TrkFitPzFracMaxE",  false});
+    //histSpecs.push_back({&preSelectedTrkPhivMaxEVec,      "preselection_hist_TrkPhivMaxE_",       "trk_phi_v_maxE",      "Track Phi (max E object) [rad]",         "Count", 20, -3.14, 3.14, false, false, "preselection_full_hist_TrkPhivMaxE",       false});
+    histSpecs.push_back({&preSelectedMergedTimeVec,       "preselection_hist_MergedTime_",        "interaction_time_merged","Merged Interaction Time Time [ns]",   "Count", 20,  0.0,  18.831,false, false, "preselection_full_hist_MergedTime",        false});
+
+    auto fillHistogramsForSample = [&](ROOT::RDF::RNode &node,
+                                       const std::string &sampleLabel,
+                                       const std::string &weightCol) {
+        for (auto &spec : histSpecs) {
+            spec.vec->push_back(
+                Plotter::CreateTH1DFromRNode(
+                    node,
+                    (spec.histNamePrefix + sampleLabel).c_str(),
+                    spec.colName,
+                    spec.xTitle,
+                    spec.yTitle,
+                    spec.nBins, spec.xMin, spec.xMax,
+                    spec.isAngle,
+                    spec.removeVectorDuplicates,
+                    weightCol));
+            // Fill systematic variance histograms - special treatment per sample: overlay gets all, dirt gets 75% normalisation, others get none
+            TH1D &nominalHist = spec.vec->back();
+            if (sampleLabel == "run4b_overlay") {
+                std::cout << "    Computing systematic variance histograms for sample: " << sampleLabel << "\n";
+                SystematicsUtil sysUtil;
+                TH1D overlaySystHist = sysUtil.RunAllMultisimSystematics(
+                    nominalHist,
+                    node,
+                    spec.colName,
+                    systConfig);
+                spec.systVarianceHists.push_back(overlaySystHist);
+            } else if (sampleLabel == "run3_dirt") {
+                // Create per-bin variance histogram for a 75% normalisation uncertainty:
+                //   var = (0.75 * yield)^2
+                TH1D dirtVar = nominalHist;
+                dirtVar.SetName((std::string(nominalHist.GetName()) + "_dirtNormVar").c_str());
+                dirtVar.Reset("ICES");
+
+                for (int bin = 1; bin <= dirtVar.GetNbinsX(); ++bin) {
+                    const double content  = nominalHist.GetBinContent(bin);
+                    const double variance = (0.75 * content) * (0.75 * content);
+                    dirtVar.SetBinContent(bin, variance);
+                    dirtVar.SetBinError(bin, 0.0);
+                }
+
+                spec.systVarianceHists.push_back(dirtVar);
+            } else {
+                // No systematic variance for other samples
+                TH1D emptyVar = nominalHist;
+                emptyVar.SetName((std::string(nominalHist.GetName()) + "_emptyVar").c_str());
+                emptyVar.Reset("ICES");
+                spec.systVarianceHists.push_back(emptyVar);
+            }
+        }
+    };
+
+    auto plotAllHistograms = [&]() {
+        for (auto &spec : histSpecs) {
+            //Compute weighted total variance histograms for each sample
+            TH1D totalVarianceHist(spec.fullPlotName.c_str(), (spec.fullPlotName + " Total Variance").c_str(), spec.nBins, spec.xMin, spec.xMax);
+            if (spec.systVarianceHists.size() != fSampleWeights.size()) {
+                std::cerr << "[Preselection] ERROR: systVarianceHists size (" << spec.systVarianceHists.size()
+                          << ") != fSampleWeights size (" << fSampleWeights.size()
+                          << ") for plot " << spec.fullPlotName << "\n";
+            }
+            const size_t n = std::min(spec.systVarianceHists.size(), fSampleWeights.size());
+            for (size_t i = 0; i < n; ++i) {
+                TH1D varHist = spec.systVarianceHists[i];
+                double weight = fSampleWeights[i];
+                varHist.Scale(weight * weight); // Scale variance
+                totalVarianceHist.Add(&varHist);
+            }
+            // Debug: Print total variance
+            std::cout << "Total variance for plot " << spec.fullPlotName << ":\n";
+            for (int bin = 1; bin <= totalVarianceHist.GetNbinsX(); ++bin) {
+                std::cout << "  Bin " << bin << ": " << totalVarianceHist.GetBinContent(bin) << "\n";
+            }
+            Plotter::FullDataMCSignalPlot(
+                *spec.vec,
+                fSampleLabels,
+                spec.fullPlotName,
+                spec.logY,
+                fSampleWeights,
+                0.7, 1.3,
+                &totalVarianceHist);
+        }
+    };
 
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         std::cout << "\n[Preselection] Writing output for sample: " << fSampleLabels[i] << '\n';
         std::cout << "    to file: " << fOutFiles[i] << '\n';
         nodes[i].Snapshot(fTreeName, fOutFiles[i], fVarsToKeep, opt);
 
+        if (!fMakePlots) continue;
 
-        //ROOT::RDF::TH1DModel NuE2Model(
-        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
-        //    ";Neutrino Energy [MeV];Count",
-        //    20, 0.0, 500.0);
-
-        //ROOT::RDF::TH1DModel FlashMatchScoreModel(
-        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
-        //    ";Flash Match Score;Count",
-        //    20, 0.0, 15.0);
-
-        //ROOT::RDF::TH1DModel TopologicalScoreModel(
-        //    ("pre_hist_" + fSampleLabels[i]).c_str(),
-        //    ";Topological Score;Count",
-        //    30, 0.0, 1.0);
-
-        //preSelectedHistVec.push_back(
-            //nodes[i].Histo1D(enModel, "NeutrinoEnergy2").GetPtr());
-        //TH1D histNuE2 = nodes[i].Histo1D(NuE2Model, "NeutrinoEnergy2").GetValue();
-        //histNuE2.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
-        //preSelectedNuE2Vec.push_back(histNuE2);
-        //TH1D histFlashMatchScore = nodes[i].Histo1D(FlashMatchScoreModel, "nu_flashmatch_score").GetValue();
-        //histFlashMatchScore.SetName(("preselection_hist_" + fSampleLabels[i]).c_str());
-        //preSelectedFlashMatchScoreVec.push_back(histFlashMatchScore);
-        //TH1D histTopoScore = nodes[i].Histo1D(TopologicalScoreModel, "topological_score").GetValue();
-        
-        if (fMakePlots) {
-            preSelectednpfpsVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_npfps_" + fSampleLabels[i]).c_str(),
-                    "n_pfps", 
-                    "Number of PFParticles",
-                    "Count",
-                    5, 0.5, 5.5));
-
-            preSelectednTracksVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_nTracks_" + fSampleLabels[i]).c_str(),
-                    "n_tracks", 
-                    "Number of Tracks",
-                    "Count",
-                    5, 0.5, 5.5));
-
-            preSelectedNuE2Vec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_NeutrinoEnergy2_" + fSampleLabels[i]).c_str(),
-                    "NeutrinoEnergy2",
-                    "Neutrino Energy [MeV]",
-                    "Count",
-                    20, 0.0, 500.0));
-
-            preSelectedSliceCaloE2Vec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_SliceCaloE2_" + fSampleLabels[i]).c_str(),
-                    "SliceCaloEnergy2",
-                    "Slice Calorimetric Energy [MeV]",
-                    "Count",
-                    20, 0.0, 500.0));
-
-            preSelectedShrdedxmaxVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_Shrdedxmax_" + fSampleLabels[i]).c_str(),
-                    "shr_tkfit_dedx_max",
-                    "Max Shower dE/dx [MeV/cm]",
-                    "Count",
-                    20, 0.0, 10.0));
-
-            preSelectedShrETotVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrETot_" + fSampleLabels[i]).c_str(),
-                    "shr_energy_tot",
-                    "Total Shower Energy [MeV]",
-                    "Count",
-                    20, 0.0, 0.25));
-
-            preSelectedTrkETotVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_TrkETot_" + fSampleLabels[i]).c_str(),
-                    "trk_energy_tot",
-                    "Total Track Energy [MeV]",
-                    "Count",
-                    20, 0.0, 0.75));
-
-            preSelectedMaxTrkEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_MaxTrkE_" + fSampleLabels[i]).c_str(),
-                    "trk_energy",
-                    "Max Track Energy [MeV]",
-                    "Count",
-                    20, 0.0, 500.0));
-
-            preSelectedShrClusDir2Vec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrClusDir2_" + fSampleLabels[i]).c_str(),
-                    "shrclusdir2",
-                    "Average Shower Cluster Direction [degrees]",
-                    "Count",
-                    20, 0, 360.0));
-
-            preSelectedFlashMatchScoreVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_FlashMatchScore_" + fSampleLabels[i]).c_str(),
-                    "nu_flashmatch_score", 
-                    "Flash Match Score",
-                    "Count",
-                    30, 0.0, 30.0));
-
-            preSelectedTopologicalScoreVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_TopologicalScore_" + fSampleLabels[i]).c_str(),
-                    "topological_score", 
-                    "Topological Score",
-                    "Count",
-                    30, 0.0, 1.0));
-
-            preSelectedShrPhivVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrPhiv_" + fSampleLabels[i]).c_str(),
-                    "shr_phi_v", 
-                    "Shr Phi [rad]",
-                    "Count",
-                    20, -3.14, 3.14,
-                    true)); // remove vector duplicates by taking first element only
-
-            preSelectedShrFitPzFracVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrFitPzFrac_" + fSampleLabels[i]).c_str(),
-                    "shr_pz_v",
-                    "Shr Fit Pz Frac",
-                    "Count",
-                    20, -1.0, 1.0,
-                    true)); // remove vector duplicates by taking first element only
-
-            preSelectedShrFitThetaVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrFitTheta_" + fSampleLabels[i]).c_str(),
-                    "shr_theta_v",
-                    "Shr Fit Theta [rad]",
-                    "Count",
-                    20, 0.0, 3.14,
-                    true)); // remove vector duplicates by taking first element only
-
-            pfng2shravrg_maxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_pfng2shravrg_maxE_" + fSampleLabels[i]).c_str(),
-                    "pfng2shravrg_maxE",
-                    "PF NG2 Shr Average Score",
-                    "Count",
-                    20, 0.0, 1.0));
-
-            preSelectedpfng2mipfrac_maxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_pfng2mipfrac_maxE_" + fSampleLabels[i]).c_str(),
-                    "pfng2mipfrac_maxE",
-                    "PFP NG2 MIP Fraction",
-                    "Count",
-                    20, 0.0, 1.0));
-
-            preSelectedpfng2hipfrac_maxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_pfng2hipfrac_maxE_" + fSampleLabels[i]).c_str(),
-                    "pfng2hipfrac_maxE",
-                    "PFP NG2 HIP Fraction",
-                    "Count",
-                    20, 0.0, 1.0));
-
-            preSelectedpfng2bkgfrac_maxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_pfng2bkgfrac_maxE_" + fSampleLabels[i]).c_str(),
-                    "pfng2bkgfrac_maxE",
-                    "PFP NG2 Background Fraction",
-                    "Count",
-                    20, 0.0, 1.0));
-
-            preSelectedMergedTimeVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_MergedTime_" + fSampleLabels[i]).c_str(),
-                    "interaction_time_merged",
-                    "Merged Interaction Time [ns]",
-                    "Count",
-                    20, 0.0, 18.831));
-
-            preSelectedInteractionTimeVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_InteractionTime_" + fSampleLabels[i]).c_str(),
-                    "interaction_time_abs",
-                    "Absolute Interaction Time [ns]",
-                    "Count",
-                    500, 0.0, 20000.0));
-
-            preSelectedUPlaneHitsVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_UPlaneHits_" + fSampleLabels[i]).c_str(),
-                    "pfnplanehits_U",
-                    "Number of U Plane Hits",
-                    "Count",
-                    30, 0.0, 300.0));
-
-            preSelectedVPlaneHitsVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_VPlaneHits_" + fSampleLabels[i]).c_str(),
-                    "pfnplanehits_V",
-                    "Number of V Plane Hits",
-                    "Count",
-                    30, 0.0, 300.0));
-
-            preSelectedYPlaneHitsVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],   
-                    ("preselection_hist_YPlaneHits_" + fSampleLabels[i]).c_str(),
-                    "pfnplanehits_Y",
-                    "Number of Y Plane Hits",
-                    "Count",
-                    30, 0.0, 300.0));
-
-            preSelectedShrFitThetaMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrFitThetaMaxE_" + fSampleLabels[i]).c_str(),
-                    "shr_theta_v_maxE",
-                    "Shr Fit Theta (max E object) [rad]",
-                    "Count",
-                    20, 0.0, 3.14));
-
-            preSelectedShrFitPzFracMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrFitPzFracMaxE_" + fSampleLabels[i]).c_str(),
-                    "shr_pz_v_maxE",
-                    "Shr Fit Pz Frac (max E object)",
-                    "Count",
-                    20, -1.0, 1.0));
-
-            preSelectedShrPhivMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_ShrPhivMaxE_" + fSampleLabels[i]).c_str(),
-                    "shr_phi_v_maxE",
-                    "Shr Phi (max E object) [rad]",
-                    "Count",
-                    20, -3.14, 3.14));
-
-            preSelectedTrkFitThetaMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_TrkFitThetaMaxE_" + fSampleLabels[i]).c_str(),
-                    "trk_theta_v_maxE",
-                    "Track Fit Theta (max E object) [rad]",
-                    "Count",
-                    20, 0.0, 3.14));
-
-            preSelectedTrkFitPzFracMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_TrkFitPzFracMaxE_" + fSampleLabels[i]).c_str(),
-                    "trk_dir_z_v_maxE",
-                    "Track Fit Pz Frac (max E object)",
-                    "Count",
-                    20, -1.0, 1.0));
-
-            preSelectedTrkPhivMaxEVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_TrkPhivMaxE_" + fSampleLabels[i]).c_str(),
-                    "trk_phi_v_maxE",
-                    "Track Phi (max E object) [rad]",
-                    "Count",
-                    20, -3.14, 3.14));
-
-            preSelectedpi0MassYVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_pi0MassY_" + fSampleLabels[i]).c_str(),
-                    "pi0_mass_Y",
-                    "Reconstructed #pi^{0} Mass [MeV]",
-                    "Count",
-                    30, 0.0, 200.0));
-
-            preselectedFlashTimeVec.push_back(
-                Plotter::CreateTH1DFromRNode(
-                    nodes[i],
-                    ("preselection_hist_FlashTime_" + fSampleLabels[i]).c_str(),
-                    "flash_time_flash_matching",
-                    "Flash Time [ns]",
-                    "Count",
-                    30, 6.5, 16.5));
-
+        // Weighting policy for plots
+        std::string weightCol;
+        if (fSampleLabels[i] == "run4b_overlay" || fSampleLabels[i] == "run4b_dirt") {
+            // Apply CV weight to MC samples that require it
+            std::cout << "    Applying weight_cv to MC histograms for sample: " << fSampleLabels[i] << "\n";
+            weightCol = "weight_cv";
+        } else {
+            weightCol = "";
         }
 
+        // Fill all plot histograms in one go
+        fillHistogramsForSample(nodes[i], fSampleLabels[i], weightCol);
     }
 
-    // Example of creating a stacked histogram
+    // Example of creating stacked histograms
     if (!fMakePlots) return;
-    Plotter::FullDataMCSignalPlot(preSelectednpfpsVec,
-                        fSampleLabels,
-                        "preselection_full_hist_npfps",
-                        false, // logy
-                        fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectednTracksVec,
-                         fSampleLabels,
-                         "preselection_full_hist_nTracks",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedNuE2Vec,
-                         fSampleLabels,
-                         "preselection_full_hist_NeutrinoEnergy2",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedSliceCaloE2Vec,
-                         fSampleLabels,
-                         "preselection_full_hist_SliceCaloE2",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrdedxmaxVec,
-                         fSampleLabels,
-                         "preselection_full_hist_Shrdedxmax",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrETotVec,
-                         fSampleLabels,
-                         "preselection_full_hist_ShrETot",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedTrkETotVec,
-                         fSampleLabels,
-                         "preselection_full_hist_TrkETot",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedMaxTrkEVec,
-                         fSampleLabels,
-                         "preselection_full_hist_MaxTrkE",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrClusDir2Vec,
-                         fSampleLabels,
-                         "preselection_full_hist_ShrClusDir2",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedFlashMatchScoreVec,
-                         fSampleLabels,
-                         "preselection_full_hist_FlashMatchScore",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrPhivVec,
-                            fSampleLabels,
-                            "preselection_full_hist_ShrPhiv",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedTopologicalScoreVec,
-                         fSampleLabels,
-                         "preselection_full_hist_TopologicalScore",
-                         false, // logy
-                         fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrFitPzFracVec,
-                            fSampleLabels,
-                            "preselection_full_hist_ShrFitPzFrac",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrFitThetaVec,
-                            fSampleLabels,
-                            "preselection_full_hist_ShrFitTheta",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(pfng2shravrg_maxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_pfng2shravrg_maxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedpfng2mipfrac_maxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_pfng2mipfrac_maxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedpfng2hipfrac_maxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_pfng2hipfrac_maxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedpfng2bkgfrac_maxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_pfng2bkgfrac_maxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedMergedTimeVec,
-                            fSampleLabels,
-                            "preselection_full_hist_MergedTime",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedInteractionTimeVec,
-                            fSampleLabels,
-                            "preselection_full_hist_InteractionTime",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedUPlaneHitsVec,
-                            fSampleLabels,
-                            "preselection_full_hist_UPlaneHits",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedVPlaneHitsVec,
-                            fSampleLabels,
-                            "preselection_full_hist_VPlaneHits",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedYPlaneHitsVec,
-                            fSampleLabels,
-                            "preselection_full_hist_YPlaneHits",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrFitThetaMaxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_ShrFitThetaMaxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedShrFitPzFracMaxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_ShrFitPzFracMaxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedTrkPhivMaxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_TrkPhivMaxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedTrkFitThetaMaxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_TrkFitThetaMaxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedTrkFitPzFracMaxEVec,
-                            fSampleLabels,
-                            "preselection_full_hist_TrkFitPzFracMaxE",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preSelectedpi0MassYVec,
-                            fSampleLabels,
-                            "preselection_full_hist_pi0MassY",
-                            false, // logy
-                            fSampleWeights);
-
-    Plotter::FullDataMCSignalPlot(preselectedFlashTimeVec,
-                            fSampleLabels,
-                            "preselection_full_hist_FlashTime",
-                            false, // logy
-                            fSampleWeights);
-
-    
+    plotAllHistograms();
 }
 
 void PreselectionModule::Finalise()
