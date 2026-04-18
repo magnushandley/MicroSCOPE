@@ -70,13 +70,15 @@ public:
                     const std::vector<double> weights,
                     double ratioYMin = 0.7,
                     double ratioYMax = 1.3,
-                    const TH1D* bkgSysVarHist = nullptr);
+                    const TH1D* bkgSysVarHist = nullptr,
+                    const std::string& MicroBooNELabel = "MicroBooNE Simulation In Progress");
 
     static void BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
                           const std::vector<std::string>& labels,
                           const std::string& basename,
                           bool logy = false,
-                          const std::vector<double> weights = {});
+                          const std::vector<double> weights = {},
+                          const std::string& MicroBooNELabel = "MicroBooNE Simulation In Progress");
 
 private:
     

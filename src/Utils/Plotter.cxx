@@ -11,6 +11,7 @@
 #include <TSystem.h>
 #include <iostream>
 #include <TLine.h>
+#include <TLatex.h>
 #include <ROOT/RDataFrame.hxx>
 
 using namespace Analysis;
@@ -197,14 +198,15 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     const std::vector<double> weights,
                     double ratioYMin,
                     double ratioYMax,
-                    const TH1D* bkgSysVarHist)
+                    const TH1D* bkgSysVarHist,
+                    const std::string& MicroBooNELabel)
 {
     std::cout << "[Plotter] Creating full stacked histogram: " << basename << std::endl;
     static const Int_t colours[] = {
-        TColor::GetColor("#e69f00"), TColor::GetColor("#5664e9"), TColor::GetColor("#009e73"),
+        TColor::GetColor("#e69f00"),TColor::GetColor("#5664e9"),TColor::GetColor("#009e73"),
         kOrange, kViolet, kCyan, kMagenta, kYellow
     };
-    static const Int_t signalColours[] = {kRed, kYellow, kBlue};
+    static const Int_t signalColours[] = {TColor::GetColor("#fc070b"), TColor::GetColor("#edc919"), TColor::GetColor("#fa04f6")};
 
     if (hists.empty() || hists.size() != labels.size()) return;
 
@@ -249,7 +251,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
 
         if (isSignal) {
             hist.SetLineColor(signalColours[i % (sizeof(signalColours)/sizeof(signalColours[0]))]);
-            hist.SetLineWidth(2);
+            hist.SetLineWidth(3);
             hist.SetFillStyle(0);
             if (i < weights.size() && weights[i] != 1.0) hist.Scale(weights[i]);
             signalHists.push_back(&hist);
@@ -350,6 +352,8 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
 
     // Overlay signal(s) and data
     for (auto* sh : signalHists) sh->Draw("HIST SAME");
+
+    //Temporary blinding
     for (auto* dh : dataHists)   dh->Draw("E SAME");
 
     hs->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
@@ -373,6 +377,14 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
         leg->AddEntry(hBkgBandLegend, "Bkg. unc.", "f");
     }
     leg->Draw();
+    if (!MicroBooNELabel.empty()) {
+        TLatex latex;
+        latex.SetNDC();
+        latex.SetTextFont(42);
+        latex.SetTextSize(0.045);
+        latex.SetTextAlign(13);
+        latex.DrawLatex(0.20, 0.85, MicroBooNELabel.c_str());
+    }
 
     // Helper to style ratio axes once (no more duplication)
     auto styleRatioAxes = [&](TH1D* h) {
@@ -466,7 +478,8 @@ void Plotter::BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
                       const std::vector<std::string>& labels,
                       const std::string& basename,
                       bool logy,
-                      const std::vector<double> weights)
+                      const std::vector<double> weights,
+                      const std::string& MicroBooNELabel)
 {
     // I am using TH1D objects rather than pointers because the pointers returned by RDataFrame are
     // smart pointers, which I think are deallocated before we can use them here. Had a bunch of seg faults...
@@ -514,7 +527,7 @@ void Plotter::BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
         if (isSignal) {
             // Style the signal and queue for overlay after the stack is drawn
             hist.SetLineColor(kRed);
-            hist.SetLineWidth(2);
+            hist.SetLineWidth(3);
             hist.SetFillStyle(0);
             // Optionally scale signal here (currently unity)
             if (i < weights.size() && weights[i] != 1.0) {
@@ -625,10 +638,19 @@ void Plotter::BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
         hBkgBandLegend->SetFillStyle(3002);
         hBkgBandLegend->SetLineColor(kGray+2);
         hBkgBandLegend->SetMarkerSize(0);
-        leg->AddEntry(hBkgBandLegend, "Bkg. unc.", "f");
+        leg->AddEntry(hBkgBandLegend, "Bkg. Stat. unc.", "f");
     }
 
     leg->Draw();
+    if (!MicroBooNELabel.empty()) {
+        TLatex latex;
+        latex.SetNDC();
+        latex.SetTextFont(42);
+        latex.SetTextSize(0.045);
+        latex.SetTextAlign(13);
+        latex.DrawLatex(0.20, 0.85, MicroBooNELabel.c_str());
+    }
+
     c->SaveAs((basename + ".png").c_str());
     c->SaveAs((basename + ".pdf").c_str());
 }

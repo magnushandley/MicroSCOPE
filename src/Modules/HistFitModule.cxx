@@ -46,11 +46,25 @@ HistFitModule::HistFitModule(const TEnv& cfg)
         fInputFiles.push_back(inputItem);
     }
 
-    std::stringstream ssLabels{cfg.GetValue("HistFitModule.SampleLabels", "")};
-    std::string label;
-    while (ssLabels >> label) {
-        if (label.back()==',') label.pop_back();
-        fSampleLabels.push_back(label);
+    const std::string labelsString = cfg.GetValue("HistFitModule.SampleLabels", "");
+    std::stringstream ssLabels{labelsString};
+    std::string labelToken;
+    while (std::getline(ssLabels, labelToken, ',')) {
+        // trim leading/trailing whitespace
+        labelToken.erase(0, labelToken.find_first_not_of(" \t\n\r"));
+        labelToken.erase(labelToken.find_last_not_of(" \t\n\r") + 1);
+
+        // Remove optional surrounding quotes so labels like "Run 3 data" are kept intact
+        if (labelToken.size() >= 2 &&
+           ((labelToken.front() == '"'  && labelToken.back() == '"') ||
+            (labelToken.front() == '\'' && labelToken.back() == '\'')))
+        {
+            labelToken = labelToken.substr(1, labelToken.size() - 2);
+        }
+
+        if (!labelToken.empty()) {
+            fSampleLabels.push_back(labelToken);
+        }
     }
 
     std::stringstream ssWeights{cfg.GetValue("HistFitModule.SampleWeights", "")};
@@ -365,8 +379,8 @@ void HistFitModule::Initialise()
     for (int i=0; i<RNodes.size(); i++){
         RNodes[i] = RNodes[i].Define("logit_bdt",
             [](float score) {
-                float s = (score + 1.0f) / 2.0f; //rescale from [-1,1] to [0,1]
-                return std::log(s / (1.0f - s));
+                //float s = (score + 1.0f) / 2.0f; //rescale from [-1,1] to [0,1]
+                return std::log(score / (1.0f - score));
             },
             {"bdt_score"});
     }
@@ -396,7 +410,7 @@ void HistFitModule::Initialise()
 
     //Scale every element by rate scaling and every bin error by sqrt(rate scaling)
     std::vector<TH1D> bdtScoreVecFakeScaling;
-    double rateScaling = 1.0;
+    double rateScaling = 1.86;
     for (size_t i = 0; i < RNodes.size(); ++i){
         TH1D hOriginal = bdtScoreVec[i];
         TH1D hScaled = hOriginal;

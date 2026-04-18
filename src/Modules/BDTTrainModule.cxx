@@ -193,6 +193,7 @@ BDTTrainModule::BuildTestTrainSamples(std::vector<ROOT::RDF::RNode> dfs,
             tmpKeep.push_back("run");
             tmpKeep.push_back("sub");
             tmpKeep.push_back("evt");
+            tmpKeep.push_back("sample_weight");
             //tmpKeep.push_back("n_pfps"); // Uncomment if needed
             trainNode.Snapshot("tree", tmpTrainName, tmpKeep, opts);
             testNode.Snapshot ("tree", tmpTestName,  tmpKeep, opts);
@@ -517,7 +518,7 @@ void BDTTrainModule::Initialise()
     //Optimise hyperparameters
 
     std::vector<int> NTreesRange = {150};
-    std::vector<int> MaxDepthRange = {4};
+    std::vector<int> MaxDepthRange = {5};
     std::vector<double> LearningRateRange = {0.1};
     std::vector<double> MinNodeSizeRange = {6.0};
     std::vector<int> nCutsRange = {20};

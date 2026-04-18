@@ -95,9 +95,6 @@ Long64_t SlimmerModule::EntryCount() const
 //------------------------------------------------------------------------------
 void SlimmerModule::Initialise()
 {
-    //std::cout << "[Slimmer] Initialising with input files: " << fInputFiles
-              //<< " and output file: " << fOutFile << "\n";
-    //fChain = BuildInputChain(fInputFiles, fTreeName);
 
     std::cout << "[Slimmer] Initialising with input files: \n";
     for (const auto& file : fInputFiles) {
@@ -110,12 +107,10 @@ void SlimmerModule::Initialise()
     nodes.reserve(dfVec.size());
     for (auto &dfPtr : dfVec) nodes.emplace_back(*dfPtr);
 
-    // RDataFrame takes ownership of the TChain pointer
-    //fRDF = std::make_unique<ROOT::RDataFrame>(*fChain);
-
     //----------------------------------------------------------------------
     // 1.  Define derived variables
     //----------------------------------------------------------------------
+
     int fileIndex = 0;
     for (auto df : nodes) {
         const double beamSpillPeriod = fBeamSpillPeriod;
@@ -352,18 +347,9 @@ void SlimmerModule::Initialise()
                 int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
                 return var.empty() ? -9999.0f : var[maxEIndex];
             },
-            {"pfng2bkgfrac", "pfnplanehits_Y"})
-        .Filter("!(par_decay_vz > 70000 && par_decay_pz < 0.01)");
-        //.Filter("flash_time_flash_matching > -1e+36");
-        //.Filter("interaction_time_abs > -10000")
-        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01")
-        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01");
-        //.Filter("interaction_time_abs > -10000");
-        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01") // KDAR_DUMP filter
-        //.Filter("run > 19900 && run < 20700")
-        //.Filter("par_decay_vz > 70000 && par_decay_pz < 0.01"); // KDAR_DUMP filter
-        // // Run 4b good timing runs filter
+            {"pfng2bkgfrac", "pfnplanehits_Y"});
         
+        //.Filter("(par_decay_vz > 70000 && par_decay_pz < 0.01)");
 
         // Append timing-related columns onto this node and snapshot from it
         ROOT::RDF::RNode dfOut = df1;
@@ -381,7 +367,10 @@ void SlimmerModule::Initialise()
                     return random_offset;
                 },
                 {"interaction_time_abs"}
-            );
+            )
+            .Redefine("Med_TT3", []() {
+                return 99999.0f;   // or whatever placeholder you want
+            });
         }
         else if (fSampleLabels[fileIndex].find("data") != std::string::npos || fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
             std::cout << "[Slimmer] Fitting timing offsets for data file.\n";
@@ -398,7 +387,7 @@ void SlimmerModule::Initialise()
                     times,
                     beamSpillPeriod,
                     1,  // K
-                    2000  // runWindowSize
+                    50  // runWindowSize
                 );
             std::cout << "[Slimmer] Created run offset map with " << runOffsetMap.size() << " entries.\n";
             auto runOffsetMapPtr = std::make_shared<const std::unordered_map<int, std::pair<double, double>>>(std::move(runOffsetMap));
@@ -526,14 +515,8 @@ void SlimmerModule::Initialise()
         opt.fCompressionLevel     = 4;
 
         std::cout << "[Slimmer] Writing slimmed tree to file: " << fOutFile << '\n';
-
-        //Test if interaction_time_merged exists
-        //auto cols = dfOut.GetColumnNames();
-        //const bool has =
-        //std::find(cols.begin(), cols.end(), "interaction_time_merged") != cols.end();
-
-        //std::cout << "[Slimmer] dfOut has interaction_time_merged? " << has << "\n";
         std::cout << "[Slimmer] Variables to keep in slimmed tree:\n";
+        
         for (const auto& var : fVarsToKeep) {
             std::cout << "  " << var << "\n";
         }
