@@ -1,6 +1,8 @@
 #include "Modules/SlimmerModule.hxx"
 #include "Utils/Plotter.hxx"
 #include "Utils/TimingUtils.hxx"
+#include "Utils/ConfigUtils.hxx"
+#include "Utils/LogicRegistry.hxx"
 
 #include <TEnv.h>
 #include <TFile.h>
@@ -21,6 +23,7 @@ SlimmerModule::SlimmerModule(const TEnv& cfg)
     , fRunLabel     (cfg.GetValue("Global.RunLabel","run_x") )
     , fMakePlots   (cfg.GetValue("Slimmer.MakePlots", false))
     , fBeamSpillPeriod (cfg.GetValue("Global.BeamSpillPeriod", 18.831))
+    , fConfig(const_cast<TEnv&>(cfg)) // Store a reference to the config for use in logic operations
 {
 
     std::stringstream ssInput{cfg.GetValue("Slimmer.InputFiles", "")};
@@ -118,238 +121,15 @@ void SlimmerModule::Initialise()
         std::string fOutFile = fOutputFiles[fileIndex];
         std::cout << "[Slimmer] Will write slimmed tree to: " << fOutFile << '\n';
 
+        auto logicConfigs = ParseLogicConfigs(fConfig, "Slimmer");
+        std::cout << "[Slimmer] Parsed " << logicConfigs.size() << " logic operations from config.\n";
 
-        // Fiducial variables to assess containment (taken from HNL analysis). The whole mess with big and small
-        // values is because in ext files the trk_sce_start_x_v vectors can be empty if there is no neutrino slice.
-        // In overlay this doesn't happen, but need to for data/ext files I think, so I set min/max to values outside the fiducial volume.
+        ROOT::RDF::RNode df1 = df;
 
-        using VecF = const std::vector<float>&;
-        using VecI = const std::vector<int>&;
-
-        auto df1 = df
-        .Define("min_x",
-            [](VecF a, VecF b) {
-                const float small = -9999;
-                float aMin = a.empty() ? small : *std::min_element(a.begin(), a.end());
-                float bMin = b.empty() ? small : *std::min_element(b.begin(), b.end());
-                return std::min(aMin, bMin);
-            },
-            {"trk_sce_start_x_v", "trk_sce_end_x_v"})
-        .Define("max_x",
-                [](VecF a, VecF b) {
-                    const float big = 9999;
-                    float aMax = a.empty() ? big : *std::max_element(a.begin(), a.end());
-                    float bMax = b.empty() ? big : *std::max_element(b.begin(), b.end());
-                    return std::max(aMax, bMax);
-                },
-                {"trk_sce_start_x_v", "trk_sce_end_x_v"})
-        .Define("min_y",
-                [](VecF a, VecF b) {
-                    const float small = -9999;
-                    float aMin = a.empty() ? small : *std::min_element(a.begin(), a.end());
-                    float bMin = b.empty() ? small : *std::min_element(b.begin(), b.end());
-                    return std::min(aMin, bMin);
-                },
-                {"trk_sce_start_y_v", "trk_sce_end_y_v"})
-        .Define("max_y",
-                [](VecF a, VecF b) {
-                    const float big = 9999;
-                    float aMax = a.empty() ? big : *std::max_element(a.begin(), a.end());
-                    float bMax = b.empty() ? big : *std::max_element(b.begin(), b.end());
-                    return std::max(aMax, bMax);
-                },
-                {"trk_sce_start_y_v", "trk_sce_end_y_v"})
-        .Define("min_z",
-                [](VecF a, VecF b) {
-                    const float small = -9999;
-                    float aMin = a.empty() ? small : *std::min_element(a.begin(), a.end());
-                    float bMin = b.empty() ? small : *std::min_element(b.begin(), b.end());
-                    return std::min(aMin, bMin);
-                },
-                {"trk_sce_start_z_v", "trk_sce_end_z_v"})
-        .Define("max_z",
-                [](VecF a, VecF b) {
-                    const float big = 9999;
-                    float aMax = a.empty() ? big : *std::max_element(a.begin(), a.end());
-                    float bMax = b.empty() ? big : *std::max_element(b.begin(), b.end());
-                    return std::max(aMax, bMax);
-                },
-                {"trk_sce_start_z_v", "trk_sce_end_z_v"})
-	  .Define("trk_score_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_score_v"})
-        .Define("shr_theta_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"shr_theta_v"})
-        .Define("shr_px_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"shr_px_v"})
-        .Define("trk_end_x_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_end_x_v"})
-        .Define("shr_phi_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"shr_phi_v"})
-        .Define("shr_pz_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"shr_pz_v"})
-        .Define("trk_theta_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_theta_v"})
-        .Define("trk_phi_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_phi_v"})
-        .Define("trk_dir_z_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_dir_z_v"})
-        .Define("trk_calo_energy_u_v_first",
-            [](VecF v) {
-                return v.empty() ? -9999.0f : v[0];
-            },
-            {"trk_calo_energy_u_v"})
-        .Define("pfnplanehits_U_sum",
-            [](VecI v) {
-                int sum = 0;
-                for (const auto& val : v) sum += val;
-                return sum;
-            },
-            {"pfnplanehits_U"})
-        .Define("pfnplanehits_V_sum",
-            [](VecI v) {
-                int sum = 0;
-                for (const auto& val : v) sum += val;
-                return sum;
-            },
-            {"pfnplanehits_V"})
-        .Define("pfnplanehits_Y_sum",
-            [](VecI v) {
-                int sum = 0;
-                for (const auto& val : v) sum += val;
-                return sum;
-            },
-            {"pfnplanehits_Y"})
-        .Define("trk_score_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_score_v", "pfnplanehits_Y"})
-        .Define("shr_theta_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"shr_theta_v", "pfnplanehits_Y"})
-        .Define("shr_px_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"shr_px_v", "pfnplanehits_Y"})
-        .Define("trk_end_x_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_end_x_v", "pfnplanehits_Y"})
-        .Define("shr_phi_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"shr_phi_v", "pfnplanehits_Y"})
-        .Define("shr_pz_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"shr_pz_v", "pfnplanehits_Y"})
-        .Define("trk_theta_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_theta_v", "pfnplanehits_Y"})
-        .Define("trk_phi_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_phi_v", "pfnplanehits_Y"})
-        .Define("trk_dir_z_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_dir_z_v", "pfnplanehits_Y"})
-        .Define("trk_calo_energy_u_v_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"trk_calo_energy_u_v", "pfnplanehits_Y"})
-        .Define("pfnplanehits_U_maxE",
-            [](VecI var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -1 : var[maxEIndex];
-            },
-            {"pfnplanehits_U", "pfnplanehits_Y"})
-        .Define("pfnplanehits_V_maxE",
-            [](VecI var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -1 : var[maxEIndex];
-            },
-            {"pfnplanehits_V", "pfnplanehits_Y"})
-        .Define("pfnplanehits_Y_maxE",
-            [](VecI var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -1 : var[maxEIndex];
-            },
-            {"pfnplanehits_Y", "pfnplanehits_Y"})
-        .Define("pfng2shravrg_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"pfng2shravrg", "pfnplanehits_Y"})
-        .Define("pfng2mipfrac_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"pfng2mipfrac", "pfnplanehits_Y"})
-        .Define("pfng2hipfrac_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"pfng2hipfrac", "pfnplanehits_Y"})
-        .Define("pfng2bkgfrac_maxE",
-            [](VecF var, VecI E){
-                int maxEIndex = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
-                return var.empty() ? -9999.0f : var[maxEIndex];
-            },
-            {"pfng2bkgfrac", "pfnplanehits_Y"});
-        
-        //.Filter("(par_decay_vz > 70000 && par_decay_pz < 0.01)");
+        //Create derived varibles based on config.
+        for (const auto& op : logicConfigs) {
+            df1 = LogicRegistry::Instance().Apply(df1, op);
+        }
 
         // Append timing-related columns onto this node and snapshot from it
         ROOT::RDF::RNode dfOut = df1;
@@ -361,7 +141,7 @@ void SlimmerModule::Initialise()
             std::cout << "[Slimmer] Adding random timing offsets for beam-off file.\n";
             dfOut = df1.Define(
                 "interaction_time_merged",
-                [beamSpillPeriod](float /*time*/) {
+                [beamSpillPeriod](float) {
                     const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
                     //std::cout << "[Slimmer] Assigned random timing offset for beam-off event: " << random_offset << " ns\n";
                     return random_offset;
@@ -369,7 +149,7 @@ void SlimmerModule::Initialise()
                 {"interaction_time_abs"}
             )
             .Redefine("Med_TT3", []() {
-                return 99999.0f;   // or whatever placeholder you want
+                return 99999.0f;   // arbitrary placeholder
             });
         }
         else if (fSampleLabels[fileIndex].find("data") != std::string::npos || fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
@@ -465,8 +245,9 @@ void SlimmerModule::Initialise()
 
         std::cout << "[Slimmer] Added interaction_time_merged variable.\n";
 
+        //Adding info required for systematics
+
         if (fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
-            // Temporary way to add in central value weights for overlay and dirt, otherwise set to 1.0, should do this by label in future
             dfOut = dfOut.Define("weight_cv",
                 [](float w1, float w2, int npi0) {
                     float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
@@ -508,6 +289,10 @@ void SlimmerModule::Initialise()
                     return 1.0f;
                 });
         }
+
+        //----------------------------------------------------------------------
+        // 2.  Snapshot only the variables we want to keep
+        //----------------------------------------------------------------------
         
         ROOT::RDF::RSnapshotOptions opt;
         opt.fMode = "RECREATE";
@@ -522,6 +307,10 @@ void SlimmerModule::Initialise()
         }
 
         dfOut.Snapshot(fTreeName, fOutFile, fVarsToKeep, opt);
+
+        //----------------------------------------------------------------------
+        // 3.  Example debugging plots (you can see me debugging some ns timing variables here...)
+        //----------------------------------------------------------------------
 
         if (fMakePlots) {
             std::cout << "Creating plots for file: " << fOutFile << std::endl;

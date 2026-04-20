@@ -49,12 +49,11 @@ namespace Analysis
                 dataFrame = dataFrame.Define(xCol, ("(double)(" + variableName + ")").c_str());
             }
         } catch (...) {
-            // If type introspection fails for any reason, fall back to a simple double cast.
             xCol = variableName + "_asDouble";
             dataFrame = dataFrame.Define(xCol, ("(double)(" + variableName + ")").c_str());
         }
 
-        //int nUniverses = dataFrame.Take(multisimWeightColumn)[0].GetSize(); // Assume same number of universes for all events
+        //int nUniverses = dataFrame.Take(multisimWeightColumn)[0].GetSize(); 
         auto wTake = dataFrame.Take<ROOT::VecOps::RVec<unsigned short>>(multisimWeightColumn);
         const auto& allWeights = wTake.GetValue();     
         const auto& firstWeights = allWeights.at(0);   
@@ -260,7 +259,7 @@ namespace Analysis
                     const double uni_j = universeHists[u].GetBinContent(j + 1);
                     cov_ij += (uni_i - nom_i) * (uni_j - nom_j);
                 }
-                cov_ij /= static_cast<double>(nUniverses); // No bias correction factor applied
+                cov_ij /= static_cast<double>(nUniverses); 
                 
                 double frac_cov_ij = (nom_i != 0.0 && nom_j != 0.0) ? cov_ij / (nom_i * nom_j) : 0.0;
                 //std::cout << "Covariance[" << i << "," << j << "] = " << cov_ij << std::endl;
@@ -281,16 +280,11 @@ namespace Analysis
         return cov;
     }
 
-    // ------------------------------------------------------------------------
-    // Combine covariance matrices (simple sum).
-    // Assumes all matrices are same dimension.
-    // ------------------------------------------------------------------------
     TMatrixD SystematicsUtil::combineCovarianceMatrices(
         const std::vector<TMatrixD>& matrices)
     {
         if (matrices.empty())
         {
-            // Return 0x0 matrix if nothing to combine
             std::cout << "[SystematicsUtil] Warning: no matrices provided for combination. Returning zero matrix." << std::endl;
             return TMatrixD();
         }
@@ -349,7 +343,7 @@ namespace Analysis
     {
         const int nRows = cov.GetNrows();
         const int nCols = cov.GetNcols();
-        const int nBins = nominalHist.GetNbinsX(); // excludes UF/OF
+        const int nBins = nominalHist.GetNbinsX(); 
 
         if (nRows != nCols)
         {
@@ -449,7 +443,6 @@ namespace Analysis
         }
         }
 
-        // Use bin numbers (1..nBins) along x-axis for compactness
         const double xMin = 0.5;
         const double xMax = nBins + 0.5;
 
@@ -530,7 +523,6 @@ namespace Analysis
                 }
             }
 
-            // Add a small margin so lines don't sit exactly on the frame bounds
             double span = vmax - vmin;
             if (span <= 0.0) span = (vmax != 0.0) ? std::abs(vmax) : 1.0;
             const double margin = 0.10 * span;
@@ -646,7 +638,7 @@ namespace Analysis
         std::string reintCVWeightBranch = systConfig.reintCVWeightBranch;
         std::string reintGlobalCVWeightBranch = systConfig.reintGlobalCVWeightBranch;
 
-            // Create multisim universes for each systematic category
+        // Create multisim universes for each systematic category
 
         std::vector<TH1D> genieUniverses = createMultiSimUniverses(nominalHist, rawDataFrame, variableName, genieMultisimBranch, genieCVWeightBranch, genieGlobalCVWeightBranch, 1.0);
         std::vector<TH1D> ppfxUniverses = createMultiSimUniverses(nominalHist, rawDataFrame, variableName, ppfxMultisimBranch, ppfxCVWeightBranch, ppfxGlobalCVWeightBranch, 1.0);

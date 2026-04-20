@@ -44,6 +44,9 @@ private:
     std::unique_ptr<TChain>     fChain;
     std::unique_ptr<ROOT::RDataFrame> fRDF;
     std::vector<std::unique_ptr<ROOT::RDataFrame>> dfVec; ///< DataFrames for each input file
+
+    //Pass cfg into self if needed for logic ops
+    TEnv& fConfig;
 };
 
 } // namespace Analysis

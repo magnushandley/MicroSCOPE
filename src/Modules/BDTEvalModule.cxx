@@ -37,7 +37,7 @@ BDTEvalModule::BDTEvalModule(const TEnv& cfg)
     // Input files: allow spaces and/or commas
     fInputFiles = split_ws_or_commas(cfg.GetValue("BDTEvalModule.InputFiles", ""));
 
-    // Variables to evaluate (must match training names!)
+    // Variables to evaluate (must match training names)
     fEvalVars   = split_ws_or_commas(cfg.GetValue("BDTEvalModule.EvalVars", ""));
 
     if (fInputFiles.empty())
@@ -65,7 +65,6 @@ void BDTEvalModule::ProcessOneFile(const std::string& inPath) const
     if (!inFile || inFile->IsZombie())
         throw std::runtime_error("[BDTEvalModule] Cannot open input file: " + inPath);
 
-    // fetch tree (allow for directory path in fTreeName)
     TTree* inTree = nullptr;
     {
         TObject* obj = inFile->Get(fTreeName.c_str());
@@ -83,7 +82,6 @@ void BDTEvalModule::ProcessOneFile(const std::string& inPath) const
     std::vector<TLeaf*> leaves;
     leaves.reserve(fEvalVars.size());
     for (const auto& v : fEvalVars) {
-        // Try both leaf and (branch->leaf) name resolution
         TLeaf* leaf = inTree->GetLeaf(v.c_str());
         if (!leaf) {
             // Some TTrees store leaves as "branch.leaf". Try to find by scanning all leaves.

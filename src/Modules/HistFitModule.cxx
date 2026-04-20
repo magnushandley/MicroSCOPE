@@ -175,8 +175,6 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     const std::vector<std::string>& labels,
     const std::string& inputFile) const
 {
-    //std::string InputFile = "/Users/magnus/Documents/PhD/MicroSCOPE/build/run/bdt_score_histograms.root";
-   // in case the file is not found
 
     bool bfile = gSystem->AccessPathName(inputFile.c_str());
     if (bfile) {
@@ -495,60 +493,6 @@ void HistFitModule::Initialise()
 
 
     std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVecFakeScaling, fSampleLabels, "bdt_score_histograms_tmp_4.root");
-    //RooStats::ModelConfig* sbModel = GetSPlusBModel(ws.get());
-    //RooStats::ModelConfig* bModel = GetBOnlyModel(ws.get());
-    
-
-    // Observed data
-    //RooAbsData *data = ws->data("obsData");
-    //if (!data) throw std::runtime_error("[HistFitModule] Cannot retrieve observed data from workspace");
-
-    //auto *poi = static_cast<RooRealVar*>(sbModel->GetParametersOfInterest()->first());
-    //if (!poi) throw std::runtime_error("[HistFitModule] Cannot retrieve POI from ModelConfig");
-
-    // Set up the hypothesis test calculator
-    //RooStats::AsymptoticCalculator ac(*data, *bModel, *sbModel);
-    //ac.SetOneSided(true);
-
-    //RooStats::HypoTestInverter calc(ac);
-    //calc.SetConfidenceLevel(0.95);
-    //calc.UseCLs(true);
-    //calc.SetVerbose(false);
-
-    // Scan from 0 to, say, 0.07
-    //const double muMin   = 0.0;
-    //const double muMax   = 0.07;
-    //const int    nPoints = 60;
-    //calc.SetFixedScan(nPoints, muMin, muMax);
-   
-    //std::unique_ptr<RooStats::HypoTestInverterResult> htres{calc.GetInterval()};
-        //if (!htres) {
-        //    std::cerr << "ERROR: HypoTestInverterResult is null\n";
-        //    return;
-        //}
-
-        //double upperLimit     = htres->UpperLimit();
-        //double upperLimitErr  = htres->UpperLimitEstimatedError();
-
-        //std::cout << "\n====================================================\n";
-        //std::cout << " Asymptotic CLs 95% upper limit on "
-        //        << poi->GetName() << " in [" << muMin << ", " << muMax << "] : "
-        //        << upperLimit << " +/- " << upperLimitErr << "\n";
-        //std::cout << "====================================================\n\n";
-
-        // --- Optional: plot CLs vs SigXsecOverSim ---
-
-        //TCanvas *c_cls = new TCanvas("c_cls", "CLs vs SigXsecOverSim", 800, 600);
-        //RooStats::HypoTestInverterPlot *clsPlot =
-        //    new RooStats::HypoTestInverterPlot("clsPlot", "CLs scan", htres.get());
-
-        // "CLs" plots CLs(µ); you can also use "CLb2CLs", "CLb", "CLs+b"
-        //clsPlot->Draw("CLs");
-        //c_cls->SetLogy();
-        //c_cls->Update();
-        //c_cls->SaveAs("cls_plot_histfitmodule.png");
-
-        // All the above is legacy code from the example, kept for reference for now.
 
     std::cout << "HypoTestInverter starting..." << std::endl;
 
