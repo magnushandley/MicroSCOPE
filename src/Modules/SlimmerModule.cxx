@@ -19,10 +19,9 @@ using namespace Analysis;
 //------------------------------------------------------------------------------
 SlimmerModule::SlimmerModule(const TEnv& cfg)
     : Module(cfg)
-    , fTreeName     (cfg.GetValue("Slimmer.TreeName","nuselection/NeutrinoSelectionFilter"  ))
+    , fTreeName     (cfg.GetValue("Slimmer.TreeName","nuselection/NeutrinoSelectionFilter"))
     , fRunLabel     (cfg.GetValue("Global.RunLabel","run_x") )
     , fMakePlots   (cfg.GetValue("Slimmer.MakePlots", false))
-    , fBeamSpillPeriod (cfg.GetValue("Global.BeamSpillPeriod", 18.831))
     , fConfig(const_cast<TEnv&>(cfg)) // Store a reference to the config for use in logic operations
 {
 
@@ -124,171 +123,23 @@ void SlimmerModule::Initialise()
         auto logicConfigs = ParseLogicConfigs(fConfig, "Slimmer");
         std::cout << "[Slimmer] Parsed " << logicConfigs.size() << " logic operations from config.\n";
 
-        ROOT::RDF::RNode df1 = df;
+        ROOT::RDF::RNode df_int = df; // Intermediate RNode to apply logic operations to, before snapshotting
 
         //Create derived varibles based on config.
-        for (const auto& op : logicConfigs) {
-            df1 = LogicRegistry::Instance().Apply(df1, op);
-        }
+        //for (const auto& op : logicConfigs) {
+        //    df_int = LogicRegistry::Instance().Apply(df_int, op);
+        //}
 
-        // Append timing-related columns onto this node and snapshot from it
-        ROOT::RDF::RNode dfOut = df1;
+        //For the tutorial, apply hard coded operations - in practice, these should be defined in the config and applied via the registry as above.
+        //-----------------------------------------------------------------------
+        //Add logic here:
+        // e.g. df_int = df_int.Define("new_variable", "expression or lambda function");
+        //
+
+        ROOT::RDF::RNode dfOut = df_int;
+
+        // Could apply file-specific logic separate to global filters and definitions.
         
-
-        // Special handling for timing variables
-        // Ext files have garbage times, so just add a random time within the spill window
-        if (fSampleLabels[fileIndex].find("beamoff") != std::string::npos) {
-            std::cout << "[Slimmer] Adding random timing offsets for beam-off file.\n";
-            dfOut = df1.Define(
-                "interaction_time_merged",
-                [beamSpillPeriod](float) {
-                    const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
-                    //std::cout << "[Slimmer] Assigned random timing offset for beam-off event: " << random_offset << " ns\n";
-                    return random_offset;
-                },
-                {"interaction_time_abs"}
-            )
-            .Redefine("Med_TT3", []() {
-                return 99999.0f;   // arbitrary placeholder
-            });
-        }
-        else if (fSampleLabels[fileIndex].find("data") != std::string::npos || fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
-            std::cout << "[Slimmer] Fitting timing offsets for data file.\n";
-            auto run_numbers = df1.Take<int>("run").GetValue();
-            auto times_f     = df1.Take<float>("interaction_time_abs").GetValue();
-            std::cout << "[Slimmer] Fitting timing offsets for " << run_numbers.size() << " events.\n";
-            std::vector<double> times;
-            times.reserve(times_f.size());
-            for (const float t : times_f) times.push_back(static_cast<double>(t));
-            std::cout << "[Slimmer] Creating run offset map.\n";
-            std::unordered_map<int, std::pair<double, double>> runOffsetMap =
-                Analysis::TimingUtils::CreateRunOffsetMap(
-                    run_numbers,
-                    times,
-                    beamSpillPeriod,
-                    1,  // K
-                    50  // runWindowSize
-                );
-            std::cout << "[Slimmer] Created run offset map with " << runOffsetMap.size() << " entries.\n";
-            auto runOffsetMapPtr = std::make_shared<const std::unordered_map<int, std::pair<double, double>>>(std::move(runOffsetMap));
-            for (const auto& [run, offset] : *runOffsetMapPtr) {
-                std::cout << "[Slimmer] Run " << run << " has timing offset: " << offset.first << " ns (uncertainty: " << offset.second << " ns)\n";
-            }
-
-            // Scatter plot of run vs timing offset
-            std::vector<double> runs;
-            std::vector<double> offsets;
-            std::vector<double> uncertainties;
-
-            runs.reserve(runOffsetMapPtr->size());
-            offsets.reserve(runOffsetMapPtr->size());
-            uncertainties.reserve(runOffsetMapPtr->size());
-
-            for (const auto& [run, offset] : *runOffsetMapPtr) {
-                runs.push_back(static_cast<double>(run));
-                offsets.push_back(offset.first);
-                uncertainties.push_back(offset.second);
-            }
-
-            // Make scatter plot
-            auto c = std::make_unique<TCanvas>("c_run_offset", "Run vs timing offset", 800, 600);
-
-            std::vector<double> xerr(runs.size(), 0.0);
-            auto g = std::make_unique<TGraphErrors>(
-                static_cast<int>(runs.size()),
-                runs.data(),
-                offsets.data(),
-                xerr.data(),
-                uncertainties.data()
-            );
-
-            g->SetTitle("Timing offset vs run;Run number;Timing offset [ns]");
-            g->SetMarkerStyle(20);
-            g->SetMarkerSize(0.9);
-            g->SetMarkerColor(kBlue+1);
-
-            g->Draw("AP");
-
-            c->SaveAs(("timing_offset_vs_run_" + fSampleLabels[fileIndex] + ".pdf").c_str());
-
-
-            std::cout << "[Slimmer] Applying run-by-run timing offsets for data file.\n";
-            dfOut = df1
-                .Define(
-                    "interaction_time_merged",
-                    [beamSpillPeriod, runOffsetMapPtr](float time, int run) {
-                        // Wrap into spill period
-                        const auto it = runOffsetMapPtr->find(run);
-                        const double offset = (it == runOffsetMapPtr->end()) ? 0.0 : it->second.first;
-                        //std::cout << "[Slimmer] Run " << run << " applying offset: " << offset << " ns\n";
-                        double time_corrected = time - offset;
-                        double wrappedTime = std::fmod(time_corrected, beamSpillPeriod);
-                        if (wrappedTime < 0) wrappedTime += beamSpillPeriod;
-                        return wrappedTime;
-                    },
-                    {"interaction_time_abs", "run"}
-                );
-        }
-        else {
-            // For non-data, just wrap into spill period
-            std::cout << "[Slimmer] Wrapping timing for non-data or ext file.\n";
-            dfOut = df1.Define(
-                "interaction_time_merged",
-                [beamSpillPeriod](float time) {
-                    double wrappedTime = std::fmod(static_cast<double>(time), beamSpillPeriod);
-                    if (wrappedTime < 0) wrappedTime += beamSpillPeriod;
-                    return wrappedTime;
-                },
-                {"interaction_time_abs"}
-            );
-        }
-
-        std::cout << "[Slimmer] Added interaction_time_merged variable.\n";
-
-        //Adding info required for systematics
-
-        if (fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
-            dfOut = dfOut.Define("weight_cv",
-                [](float w1, float w2, int npi0) {
-                    float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
-                    float safeWeight2 = (w2 > 0.0f && !std::isnan(w2) && !std::isinf(w2) && w2 < 100) ? w2 : 1.0f;
-                    if (npi0 > 0) {
-                        safeWeight2 = safeWeight2 * 0.759; // Scaling on files with pi0's, as done by David
-                    }
-                    return safeWeight1 * safeWeight2;
-                }, {"weightSplineTimesTune", "ppfx_cv", "npi0"})
-                .Define("weight_cv_untuned",
-                [](float w1, float w2, int npi0) {
-                    float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
-                    float safeWeight2 = (w2 > 0.0f && !std::isnan(w2) && !std::isinf(w2) && w2 < 100) ? w2 : 1.0f;
-                    if (npi0 > 0) {
-                        safeWeight2 = safeWeight2 * 0.759; // Scaling on files with pi0's, as done by David
-                    }
-                    return safeWeight1 * safeWeight2;
-                }, {"weightSpline", "ppfx_cv", "npi0"})
-                .Define("weight_cv_nosplineortune",
-                [](float w, int npi0) {
-                    float safeWeight = (w > 0.0f && !std::isnan(w) && !std::isinf(w) && w < 100) ? w : 1.0f;
-                    if (npi0 > 0) {
-                        safeWeight = safeWeight * 0.759; // Scaling on files with pi0's, as done by David
-                    }
-                    return safeWeight;
-                }, {"ppfx_cv", "npi0"})
-                .Define("weight_cv_noppfx",
-                [](float w1, int npi0) {
-                    float safeWeight = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
-                    if (npi0 > 0) {
-                        safeWeight = safeWeight * 0.759; // Scaling on files with pi0's, as done by David
-                    }
-                    return safeWeight;
-                }, {"weightSplineTimesTune", "npi0"});
-        }
-        else {
-            dfOut = dfOut.Define("weight_cv",
-                []() {
-                    return 1.0f;
-                });
-        }
 
         //----------------------------------------------------------------------
         // 2.  Snapshot only the variables we want to keep
@@ -308,31 +159,9 @@ void SlimmerModule::Initialise()
 
         dfOut.Snapshot(fTreeName, fOutFile, fVarsToKeep, opt);
 
-        //----------------------------------------------------------------------
-        // 3.  Example debugging plots (you can see me debugging some ns timing variables here...)
-        //----------------------------------------------------------------------
-
         if (fMakePlots) {
             std::cout << "Creating plots for file: " << fOutFile << std::endl;
-            Plotter::SaveHist(
-                dfOut.Histo1D({"sub_hist", ";run_number;Count", 50, 0, 600}, "sub").GetPtr(),
-                "slimmer_"+fRunLabel+"_run_histogram" , "prelim");
-            Plotter::SaveHist(
-                dfOut.Histo1D({"par_decay_vz_hist", ";Kaon Decay Vertex Z [cm];Count", 50, 0, 75000}, "par_decay_vz").GetPtr(),
-                "slimmer_"+fRunLabel+"_kaon_decay_vz_histogram" , "prelim");
-            Plotter::SaveHist(
-                dfOut.Histo1D({"par_decay_pz_hist", ";Kaon Decay Pz [GeV];Count", 50, 0, 12}, "par_decay_pz").GetPtr(),
-                "slimmer_"+fRunLabel+"_kaon_decay_pz_histogram" , "prelim");
-            Plotter::SaveHist(
-                dfOut.Histo1D({"reco_minus_true_t_hist", ";Reconstructed - True Time [ns];Count", 100, 4000, 4200}, "reco_minus_true_time").GetPtr(),
-                "slimmer_"+fRunLabel+"_reco_minus_true_t_histogram" , "prelim");
-            Plotter::SaveHist(
-                dfOut.Histo1D({"pmt_time_hist", ";PMT Time [ns];Count", 100, 0, 20}, "pmt_time").GetPtr(),
-                "slimmer_"+fRunLabel+"_pmt_time_histogram" , "prelim");
-            std::cout << "[Slimmer] Checking if mc_interaction_time column exists for plotting...\n";
-            Plotter::SaveHist(
-                dfOut.Histo1D({"mc_interaction_time_hist", ";True Interaction Time [ns];Count", 1000, -10000, 20000}, "mc_interaction_time").GetPtr(),
-                "slimmer_"+fRunLabel+"_mc_interaction_time_histogram" , "prelim");
+            // Could add some quick diagnostic plots here.
         }
 
         fileIndex++;
