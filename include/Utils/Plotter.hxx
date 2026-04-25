@@ -5,6 +5,8 @@
  *  Helper functions to draw and save histograms and graphs
  *--------------------------------------------------------------------------*/
 
+#include "Utils/ConfigUtils.hxx"
+
 #include <string>
 #include <vector>
 #include <memory>
@@ -65,6 +67,17 @@ public:
 
     static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     const std::vector<std::string>& labels,
+                    const std::string& basename,
+                    bool logy,
+                    const std::vector<double> weights,
+                    double ratioYMin = 0.7,
+                    double ratioYMax = 1.3,
+                    const TH1D* bkgSysVarHist = nullptr,
+                    const std::string& MicroBooNELabel = "MicroBooNE Simulation In Progress");
+
+    static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
+                    const std::vector<std::string>& labels,
+                    const std::vector<SampleType>& sampleTypes,
                     const std::string& basename,
                     bool logy,
                     const std::vector<double> weights,
