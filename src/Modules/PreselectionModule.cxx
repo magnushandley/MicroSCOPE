@@ -226,36 +226,8 @@ void PreselectionModule::Initialise()
     opt.fCompressionAlgorithm = ROOT::kZLIB;
     opt.fCompressionLevel     = 4;
 
-    // Test of whether any further timing alignment is needed. Use the timing utility function from TimingUtils to find the
-    // mean timing offsets. Should be zero if no additional shift happens.
-    for (std::size_t i = 0; i < nodes.size(); ++i) {
-        //Create vector of times from the dataframe
-        std::vector<double> times = nodes[i].Take<double>("interaction_time_merged").GetValue();
-
-        auto [A, mu, sigma, C, muError] = TimingUtils::WrappedGaussianFit(times, /*period=*/18.831, /*K=*/3);
-        std::cout << "[Preselection] Timing fit results for sample " << fSampleLabels[i] << ":\n";
-        std::cout << "  A     = " << A << "\n";
-        std::cout << "  mu    = " << mu << "\n";
-        std::cout << "  sigma = " << sigma << "\n";
-        std::cout << "  C     = " << C << "\n";
-        std::cout << "  muError = " << muError << "\n";
-
-        //From this, there is a differenc of 0.5915 ns. For diagnostics, add another branch to the
-        //RNode, adding this as a correction to the overlay sample only
-        if (IsOverlaySample(fSampleTypes[i])) {
-            nodes[i] = nodes[i].Redefine("interaction_time_merged",
-                [](double t) {
-                    double corrected_time = t + 0.5915; // Apply the timing correction
-                    double remerged_time = std::fmod(corrected_time, 18.831); // Wrap around using the spill period
-                    if (remerged_time < 0) remerged_time += 18.831; // Ensure non-negative
-                    return remerged_time;
-                },
-                {"interaction_time_merged"}
-            );
-            std::cout << "[Preselection] Applied timing correction of " << mu << " ns to sample " << fSampleLabels[i] << ".\n";
-        }
-    }
-
+    // I manually add branches at the slimmer with different levels of weighting: for the tutorial, I disable systematics
+    // but am leaving these here for reference
     SystematicsConfig systConfig;
     systConfig.genieMultisimBranch = "weightsGenie";
     systConfig.genieCVWeightBranch = "weight_cv_untuned";
