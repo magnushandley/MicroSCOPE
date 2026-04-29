@@ -13,6 +13,9 @@
 #include <TLine.h>
 #include <TLatex.h>
 #include <ROOT/RDataFrame.hxx>
+#include <algorithm>
+#include <cmath>
+#include <cctype>
 
 using namespace Analysis;
 
@@ -201,6 +204,36 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     const TH1D* bkgSysVarHist,
                     const std::string& MicroBooNELabel)
 {
+    std::vector<SampleType> sampleTypes;
+    sampleTypes.reserve(labels.size());
+    for (const auto& label : labels) {
+        sampleTypes.push_back(InferPlotSampleTypeFromLabel(label));
+    }
+
+    FullDataMCSignalPlot(
+        hists,
+        labels,
+        sampleTypes,
+        basename,
+        logy,
+        weights,
+        ratioYMin,
+        ratioYMax,
+        bkgSysVarHist,
+        MicroBooNELabel);
+}
+
+void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
+                    const std::vector<std::string>& labels,
+                    const std::vector<SampleType>& sampleTypes,
+                    const std::string& basename,
+                    bool logy,
+                    const std::vector<double> weights,
+                    double ratioYMin,
+                    double ratioYMax,
+                    const TH1D* bkgSysVarHist,
+                    const std::string& MicroBooNELabel)
+{
     std::cout << "[Plotter] Creating full stacked histogram: " << basename << std::endl;
     static const Int_t colours[] = {
         TColor::GetColor("#e69f00"),TColor::GetColor("#5664e9"),TColor::GetColor("#009e73"),
@@ -208,19 +241,14 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     };
     static const Int_t signalColours[] = {TColor::GetColor("#fc070b"), TColor::GetColor("#edc919"), TColor::GetColor("#fa04f6")};
 
-    if (hists.empty() || hists.size() != labels.size()) return;
-
-    const auto toLower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-        return s;
-    };
+    if (hists.empty() || hists.size() != labels.size() || hists.size() != sampleTypes.size()) return;
 
     bool hasData = false;
-    for (const auto& lbl : labels) {
-        if (toLower(lbl).find("data") != std::string::npos) { hasData = true; break; }
+    for (SampleType sampleType : sampleTypes) {
+        if (IsDataSample(sampleType)) { hasData = true; break; }
     }
     if (!hasData) {
-        std::cerr << "[Plotter] FullDataMCSignalPlot: no data histogram found in labels — skipping ratio panel." << std::endl;
+        std::cerr << "[Plotter] FullDataMCSignalPlot: no data histogram found in sample types - skipping ratio panel." << std::endl;
     }
 
     ApplyStyle("prelim");
@@ -245,9 +273,8 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     for (size_t i = 0; i < hists.size(); ++i) {
         auto& hist = hists[i];
 
-        const std::string llbl = toLower(labels[i]);
-        const bool isSignal = llbl.find("signal") != std::string::npos;
-        const bool isData   = llbl.find("data")   != std::string::npos;
+        const bool isSignal = IsSignalSample(sampleTypes[i]);
+        const bool isData   = IsDataSample(sampleTypes[i]);
 
         if (isSignal) {
             hist.SetLineColor(signalColours[i % (sizeof(signalColours)/sizeof(signalColours[0]))]);
@@ -362,9 +389,8 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     // Legend
     auto leg = new TLegend(0.7, 0.7, 0.88, 0.88);
     for (size_t i = 0; i < hists.size(); ++i) {
-        const std::string llbl = toLower(labels[i]);
-        const bool isSignal = llbl.find("signal") != std::string::npos;
-        const bool isData   = llbl.find("data")   != std::string::npos;
+        const bool isSignal = IsSignalSample(sampleTypes[i]);
+        const bool isData   = IsDataSample(sampleTypes[i]);
         const char* opt = isData ? "lep" : (isSignal ? "l" : "f");
         leg->AddEntry(&hists[i], labels[i].c_str(), opt);
     }

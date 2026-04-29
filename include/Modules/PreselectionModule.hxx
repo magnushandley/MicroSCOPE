@@ -2,6 +2,7 @@
 #define PRESELECTION_MODULE_HXX
 
 #include "Framework/Module.hxx"
+#include "Utils/ConfigUtils.hxx"
 #include "Utils/Plotter.hxx"
 
 #include <ROOT/RDataFrame.hxx>
@@ -33,11 +34,13 @@ private:
     std::string        fTreeName;        ///< name of the input TTree
     std::vector<std::string>        fOutFiles;         ///< result file
     std::vector<std::string> cuts;       ///< List of cuts strings to apply
-    std::vector<std::string> fSampleLabels; ///< Labels for the samples, e.g. "data", "overlay", "signal"
+    std::vector<std::string> fSampleLabels; ///< Legend/log labels for each sample
+    std::vector<SampleType> fSampleTypes; ///< Analysis role for each sample
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     std::vector<std::string> fVarsToKeep;///< thin list, incl. derived vars
     std::string        fRunLabel;        ///< “numi_run4b”, …
     bool              fMakePlots;      ///< whether to create output plots
+    std::vector<PlotConfig> fPlotConfigs; ///< Config-driven plot definitions
 
     /// Working objects
     std::unique_ptr<TChain>     fChain;

@@ -16,6 +16,7 @@ make_runner(run_preselection)
 make_runner(run_bdttrain)
 make_runner(run_bdteval)
 make_runner(run_histfit)
+make_runner(run_python)
 
 #add_executable(run_slimmer run_slimmer.cxx)
 
