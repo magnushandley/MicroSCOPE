@@ -9,6 +9,7 @@
 #include <TH1D.h>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <sstream>
 
 using namespace Analysis;
@@ -19,11 +20,15 @@ struct PlotRuntime {
     PlotConfig        config;
     std::vector<TH1D> histograms;
     std::vector<TH1D> systVarianceHists;
+    TH1D              detVarVarianceHist;
+    bool              hasDetVarVariance = false;
 };
 
 std::string DefaultPlotWeightColumn(SampleType sampleType)
 {
-    return (IsOverlaySample(sampleType) || IsDirtSample(sampleType)) ? "weight_cv" : "";
+    return (IsOverlaySample(sampleType) || IsDirtSample(sampleType) || IsDetectorVariationInputSample(sampleType))
+        ? "weight_cv"
+        : "";
 }
 
 TH1D MakeEmptyVarianceHist(const TH1D& nominalHist, const std::string& suffix)
@@ -150,6 +155,26 @@ PreselectionModule::PreselectionModule(const TEnv& cfg)
                                  + ") does not match InputFiles count (" + std::to_string(nSamples) + ").");
     }
 
+    const auto nDetVarCVSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsDetectorVariationCVSample(type); });
+    const auto nDetVarSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsDetectorVariationSample(type); });
+
+    if (nDetVarSamples > 0 && nDetVarCVSamples == 0) {
+        throw std::runtime_error("[Preselection] SampleTypes contains detvar samples but no detvarcv sample.");
+    }
+    if (nDetVarCVSamples > 1) {
+        throw std::runtime_error("[Preselection] SampleTypes must contain at most one detvarcv sample.");
+    }
+    if (nDetVarCVSamples == 1 && nDetVarSamples == 0) {
+        std::cout << "[Preselection] Warning: detvarcv sample configured without detvar samples; "
+                  << "detector variation systematics will be skipped.\n";
+    }
+
     if (fMakePlots) {
         fPlotConfigs = ParsePlotConfigs(cfg, "Preselection");
         if (fPlotConfigs.empty()) {
@@ -273,9 +298,24 @@ void PreselectionModule::Initialise()
         plots.push_back({plotConfig, {}, {}});
     }
 
+    std::vector<std::string> plotSampleLabels;
+    std::vector<SampleType> plotSampleTypes;
+    std::vector<double> plotSampleWeights;
+
+    std::size_t detVarCVIndex = nodes.size();
+    std::vector<std::size_t> detVarIndices;
+    for (std::size_t i = 0; i < fSampleTypes.size(); ++i) {
+        if (IsDetectorVariationCVSample(fSampleTypes[i])) {
+            detVarCVIndex = i;
+        } else if (IsDetectorVariationSample(fSampleTypes[i])) {
+            detVarIndices.push_back(i);
+        }
+    }
+
     auto fillHistogramsForSample = [&](ROOT::RDF::RNode& node,
                                        const std::string& sampleLabel,
-                                       SampleType sampleType) {
+                                       SampleType sampleType,
+                                       double sampleWeight) {
         for (auto& plot : plots) {
             const bool useFirstElement = plot.config.valueMode == "first_element";
             const std::string weightCol = plot.config.weightColumn.empty()
@@ -332,6 +372,99 @@ void PreselectionModule::Initialise()
                 plot.systVarianceHists.push_back(MakeEmptyVarianceHist(nominalHist, "_emptyVar"));
             }
         }
+
+        plotSampleLabels.push_back(sampleLabel);
+        plotSampleTypes.push_back(sampleType);
+        plotSampleWeights.push_back(sampleWeight);
+    };
+
+    auto fillDetectorVariationSystematics = [&]() {
+        if (detVarCVIndex == nodes.size() || detVarIndices.empty()) {
+            return;
+        }
+
+        for (auto& plot : plots) {
+            if (!plot.config.enableSystematics) {
+                continue;
+            }
+
+            const bool useFirstElement = plot.config.valueMode == "first_element";
+            const std::string detVarColumn = useFirstElement
+                ? plot.config.column + "_detvarFirstElement"
+                : plot.config.column;
+            const std::string weightCol = plot.config.weightColumn.empty()
+                ? DefaultPlotWeightColumn(fSampleTypes[detVarCVIndex])
+                : plot.config.weightColumn;
+
+            ROOT::RDF::RNode detVarCVNode = nodes[detVarCVIndex];
+            std::vector<ROOT::RDF::RNode> detVarNodes;
+            std::vector<double> globalDetVarWeights; 
+            std::vector<std::string> detVarNames;
+            detVarNodes.reserve(detVarIndices.size());
+            detVarNames.reserve(detVarIndices.size());
+            globalDetVarWeights.reserve(detVarIndices.size());
+
+            if (useFirstElement) {
+                detVarCVNode = detVarCVNode.Define(
+                    detVarColumn.c_str(),
+                    [](const ROOT::VecOps::RVec<float>& vec) {
+                        return vec.empty() ? -9999.0f : vec[0];
+                    },
+                    {plot.config.column.c_str()});
+            }
+
+            for (const std::size_t idx : detVarIndices) {
+                ROOT::RDF::RNode detVarNode = nodes[idx];
+                if (useFirstElement) {
+                    detVarNode = detVarNode.Define(
+                        detVarColumn.c_str(),
+                        [](const ROOT::VecOps::RVec<float>& vec) {
+                            return vec.empty() ? -9999.0f : vec[0];
+                        },
+                        {plot.config.column.c_str()});
+                }
+                detVarNodes.push_back(detVarNode);
+                detVarNames.push_back(fSampleLabels[idx]);
+                globalDetVarWeights.push_back(fSampleWeights[idx]);
+            }
+
+            double nomHistScaleFactor = fSampleWeights[detVarCVIndex];
+
+            if (!weightCol.empty()) {
+                std::cout << "    Applying " << weightCol
+                          << " to detector variation systematics for plot: "
+                          << plot.config.name << "\n";
+            }
+
+            TH1D detVarCVNominalHist = Plotter::CreateTH1DFromRNode(
+                detVarCVNode,
+                plot.config.histNamePrefix + fSampleLabels[detVarCVIndex] + "_detvarcv",
+                detVarColumn,
+                plot.config.xTitle,
+                plot.config.yTitle,
+                plot.config.nBins,
+                plot.config.xMin,
+                plot.config.xMax,
+                false,
+                false,
+                weightCol);
+
+            std::cout << "    Computing detector variation systematics for plot: "
+                      << plot.config.name << " using CV sample: "
+                      << fSampleLabels[detVarCVIndex] << "\n";
+
+            SystematicsUtil sysUtil;
+            plot.detVarVarianceHist = sysUtil.RunAllDetVarSystematics(
+                detVarCVNominalHist,
+                nodes[detVarCVIndex],
+                detVarNodes,
+                detVarNames,
+                detVarColumn,
+                globalDetVarWeights,
+                nomHistScaleFactor,
+                weightCol);
+            plot.hasDetVarVariance = true;
+        }
     };
 
     auto plotAllHistograms = [&]() {
@@ -343,18 +476,22 @@ void PreselectionModule::Initialise()
                 plot.config.xMin,
                 plot.config.xMax);
 
-            if (plot.systVarianceHists.size() != fSampleWeights.size()) {
+            if (plot.systVarianceHists.size() != plotSampleWeights.size()) {
                 std::cerr << "[Preselection] ERROR: systVarianceHists size (" << plot.systVarianceHists.size()
-                          << ") != fSampleWeights size (" << fSampleWeights.size()
+                          << ") != plotted sample weights size (" << plotSampleWeights.size()
                           << ") for plot " << plot.config.outputName << "\n";
             }
 
-            const size_t n = std::min(plot.systVarianceHists.size(), fSampleWeights.size());
+            const size_t n = std::min(plot.systVarianceHists.size(), plotSampleWeights.size());
             for (size_t i = 0; i < n; ++i) {
                 TH1D varHist = plot.systVarianceHists[i];
-                const double weight = fSampleWeights[i];
+                const double weight = plotSampleWeights[i];
                 varHist.Scale(weight * weight);
                 totalVarianceHist.Add(&varHist);
+            }
+
+            if (plot.hasDetVarVariance) {
+                totalVarianceHist.Add(&plot.detVarVarianceHist);
             }
 
             std::cout << "Total variance for plot " << plot.config.outputName << ":\n";
@@ -364,11 +501,11 @@ void PreselectionModule::Initialise()
 
             Plotter::FullDataMCSignalPlot(
                 plot.histograms,
-                fSampleLabels,
-                fSampleTypes,
+                plotSampleLabels,
+                plotSampleTypes,
                 plot.config.outputName,
                 plot.config.logY,
-                fSampleWeights,
+                plotSampleWeights,
                 0.7,
                 1.3,
                 &totalVarianceHist);
@@ -380,12 +517,133 @@ void PreselectionModule::Initialise()
         std::cout << "    to file: " << fOutFiles[i] << '\n';
         nodes[i].Snapshot(fTreeName, fOutFiles[i], fVarsToKeep, opt);
 
+        //Test code for checking event matching in systematics utility. Provide overlay sample as both cv and the detvar,
+        //should produce perfect matching histogram.
+
+        if (IsOverlaySample(fSampleTypes[i])){
+            SystematicsUtil sysUtil;
+            ROOT::RDF::RNode cvNode = nodes[i];
+            std::vector<ROOT::RDF::RNode> detVarNodes = {nodes[i]};
+            std::vector<std::string> detVarNames = {"overlay"};
+            std::string branchName = "NeutrinoEnergy2";
+            std::string weightColumn = "weight_cv";
+            TH1D cvNominalHist = Plotter::CreateTH1DFromRNode(
+                cvNode,
+                "cv_nominal",
+                branchName,
+                branchName,
+                "Events",
+                50,
+                0.0,
+                500.0,
+                false,
+                false,
+                weightColumn);
+            std::vector<TH1D> matchedHists = sysUtil.createMatchedDetVarHists(
+                cvNode,
+                detVarNodes,
+                detVarNames,
+                branchName,
+                weightColumn,
+                cvNominalHist);
+            // Compare the matched histogram to the nominal histogram, they should be identical
+            if (matchedHists.size() != 1) {
+                std::cerr << "[Preselection] ERROR: Expected 1 matched histogram, got " << matchedHists.size() << "\n";
+            } else {
+                TH1D& matchedHist = matchedHists[0];
+                bool identical = true;
+                for (int bin = 1; bin <= cvNominalHist.GetNbinsX(); ++bin) {
+                    double nomContent = cvNominalHist.GetBinContent(bin);
+                    double matchedContent = matchedHist.GetBinContent(bin);
+                    if (std::abs(nomContent - matchedContent) > 1e-6) {
+                        identical = false;
+                        std::cerr << "[Preselection] ERROR: Bin " << bin << " content mismatch: nominal = " << nomContent << ", matched = " << matchedContent << "\n";
+                    }
+                }
+                if (!identical) {
+                    std::cerr << "[Preselection] ERROR: Matched histogram does not match nominal histogram\n";
+                }
+                if (identical) {
+                    std::cout << "[Preselection] SUCCESS: Matched histogram matches nominal histogram\n";
+                }
+            }
+        }
+
+        // End of test code for histogram matching in systematics utility
+
+        // Test code to make a plot of the detvar cv and variations
+        if (IsDetectorVariationCVSample(fSampleTypes[i])) {
+            std::cout << "\n[Preselection] Creating test plot of detector variation CV and variations for sample: " << fSampleLabels[i] << '\n';
+            TH1D detVarNominalTestHist = Plotter::CreateTH1DFromRNode(
+                nodes[i],
+                "detvar_test",
+                "NeutrinoEnergy2",
+                "NeutrinoEnergy2",
+                "Events",
+                30,
+                0.0,
+                500.0,
+                false,
+                false,
+                "weight_cv");
+            // Create matched histograms for all detvar variations using the systematics utility function
+            SystematicsUtil sysUtil;
+            std::vector<ROOT::RDF::RNode> detVarNodes;
+            std::vector<std::string> detVarNames;
+            for (std::size_t idx : detVarIndices) {
+                detVarNodes.push_back(nodes[idx]);
+                detVarNames.push_back(fSampleLabels[idx]);
+            }
+            std::vector<TH1D> detVarHists = sysUtil.createMatchedDetVarHists(
+                nodes[i],
+                detVarNodes,
+                detVarNames,
+                "NeutrinoEnergy2",
+                "weight_cv",
+                detVarNominalTestHist);
+
+            //Output the number of entries in each histogram for diagnostics
+            std::cout << "Entries in CV nominal histogram: " << detVarNominalTestHist.GetEntries()
+                        << ", Entries in detvar histograms: ";
+            for (const auto& hist : detVarHists) {
+                std::cout << hist.GetEntries() << " ";
+            }
+            std::cout << "\n";
+            // Plot the nominal histogram and all detvar variations on the same plot for comparison
+            std::vector<TH1D> allHists = {detVarNominalTestHist};
+            allHists.insert(allHists.end(), detVarHists.begin(), detVarHists.end());
+            std::vector<std::string> allLabels = {fSampleLabels[i]};
+            allLabels.insert(allLabels.end(), detVarNames.begin(), detVarNames.end());
+            std::vector<SampleType> allTypes = {fSampleTypes[i]};
+            allTypes.insert(allTypes.end(), detVarIndices.size(), SampleType::DetectorVariation);
+            std::vector<double> allWeights(allLabels.size(), 1.0);
+            TCanvas c("c", "c", 800, 600);
+            for (size_t j = 0; j < allHists.size(); ++j) {
+                allHists[j].SetLineColor(j + 1);
+                allHists[j].SetMarkerColor(j + 1);
+                //Standard root plot
+                if (j == 0)
+                    allHists[j].Draw("hist");
+                else
+                    allHists[j].Draw("same E1");
+            }
+            c.BuildLegend();
+            c.SaveAs("detvar_comparison.png");
+        }
+
         if (!fMakePlots) continue;
 
-        fillHistogramsForSample(nodes[i], fSampleLabels[i], fSampleTypes[i]);
+        if (!IsPlottableSample(fSampleTypes[i])) {
+            std::cout << "[Preselection] Skipping normal plot histograms for hidden sample: "
+                      << fSampleLabels[i] << " (" << SampleTypeName(fSampleTypes[i]) << ")\n";
+            continue;
+        }
+
+        fillHistogramsForSample(nodes[i], fSampleLabels[i], fSampleTypes[i], fSampleWeights[i]);
     }
 
     if (!fMakePlots) return;
+    fillDetectorVariationSystematics();
     plotAllHistograms();
 }
 

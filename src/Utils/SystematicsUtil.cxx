@@ -227,6 +227,103 @@ namespace Analysis
         return universes;
     }
 
+
+    using EventKey = uint64_t;
+    using EventSet = std::unordered_set<EventKey>;
+
+    // Fast hash map for run, sub, evt -> single number so we can do matching.
+    // Caveat: only works for run < 2^22, subrun < 2^21, event < 2^21.
+    // If we exceed these, then we will have bit collisions (bad).
+
+    EventKey MakeKey(int run, int subrun, int event) {
+        return (uint64_t(run)   << 42) |
+            (uint64_t(subrun) << 21) |
+            uint64_t(event);
+    }
+
+    EventSet BuildCVEventSet(ROOT::RDF::RNode cv_df,
+                        const std::string& run_col = "run",
+                        const std::string& subrun_col = "sub",
+                        const std::string& event_col = "evt")
+    {
+        EventSet cv_events;
+        cv_df.Foreach(
+            [&cv_events](int run,
+                        int subrun,
+                        int event) {
+                cv_events.insert(MakeKey(run, subrun, event));
+            },
+            {run_col, subrun_col, event_col}
+        );
+        return cv_events;
+    }
+
+    ROOT::RDF::RNode FilterToCVEvents(ROOT::RDF::RNode detvar_df,
+                    std::shared_ptr<const EventSet> cv_events,
+                    const std::string& run_col = "run",
+                    const std::string& subrun_col = "sub",
+                    const std::string& event_col = "evt")
+    {
+        return detvar_df.Filter(
+            [cv_events](int run,
+                        int subrun,
+                        int event) {
+                return cv_events->count(MakeKey(run, subrun, event)) > 0;
+            },
+            {run_col, subrun_col, event_col},
+            "Keep only detector variation events present in CV"
+        );
+    }
+
+    std::vector<TH1D> SystematicsUtil::createMatchedDetVarHists(
+        const ROOT::RDF::RNode& CVNode,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        std::string branchName,
+        const std::string& weightColumn,
+        const TH1D& CVNominalHist)
+        {
+
+        using EventKey = uint64_t;
+        using EventSet = std::unordered_set<EventKey>;
+
+        auto cv_events = std::make_shared<EventSet>(BuildCVEventSet(CVNode, "run", "sub", "evt"));
+        std::vector<TH1D> hists;
+        hists.reserve(detVarNodes.size());
+
+        auto hist_model = CVNominalHist; // Use CV nominal as model for binning, etc.
+
+        for (size_t i = 0; i < detVarNodes.size(); ++i) {
+            auto detvar_df = detVarNodes[i];
+            auto nEntriesBefore = detvar_df.Count().GetValue();
+            auto matched_df = FilterToCVEvents(detvar_df, cv_events,
+                                "run", "sub", "evt");
+            auto nEntriesAfter = matched_df.Count().GetValue();
+            std::cout << "DetVar sample " << detVarNames[i] << ": "
+                      << nEntriesBefore << " entries before matching, "
+                      << nEntriesAfter << " entries after matching.\n";
+            std::cout << "  Matched " << nEntriesAfter << " / " << nEntriesBefore
+                      << " events (" << (100.0 * nEntriesAfter / nEntriesBefore) << "%) in detvar sample " << detVarNames[i] << "\n";
+
+            ROOT::RDF::RResultPtr<TH1D> histPtr = weightColumn.empty()
+                ? matched_df.Histo1D(hist_model, branchName)
+                : matched_df.Histo1D(hist_model, branchName, weightColumn);
+
+            TH1D hist = *histPtr;
+            hist.SetDirectory(nullptr);
+
+            if (i < detVarNames.size()) {
+                hist.SetName(Form("%s_%s", CVNominalHist.GetName(), detVarNames[i].c_str()));
+                hist.SetTitle(Form("%s %s", CVNominalHist.GetTitle(), detVarNames[i].c_str()));
+            }
+
+            hists.push_back(std::move(hist));
+        }
+        return hists;
+    }
+
+
+
     // ------------------------------------------------------------------------
     // Compute covariance from a set of universe histograms.
     // ------------------------------------------------------------------------
@@ -279,6 +376,39 @@ namespace Analysis
         }
         return cov;
     }
+
+    TMatrixD SystematicsUtil::covarianceMatrixFromDetVars(
+        const TH1D& nominalHist,
+        const std::vector<TH1D>& detVarHists,
+        const std::vector<double>& detVarWeights,
+        const double nomHistScaleFactor)
+        {
+            const int nBins = nominalHist.GetNbinsX();
+            const int nDetVars = static_cast<int>(detVarHists.size());
+
+            TMatrixD cov(nBins, nBins);
+            cov.Zero();
+
+            for (int i = 0; i < nBins; ++i)
+            {
+                const double nom_i = nominalHist.GetBinContent(i + 1) * nomHistScaleFactor;
+                for (int j = 0; j < nBins; ++j)
+                {
+                    const double nom_j = nominalHist.GetBinContent(j + 1) * nomHistScaleFactor;
+                    double cov_ij = 0.0;
+                    for (int v = 0; v < nDetVars; ++v)
+                    {
+                        const double weight = detVarWeights[v];
+                        const double var_i = detVarHists[v].GetBinContent(i + 1) * weight;
+                        const double var_j = detVarHists[v].GetBinContent(j + 1) * weight;
+                        cov_ij += (var_i - nom_i) * (var_j - nom_j);
+                    }
+                    cov(i, j) = cov_ij;
+                }
+            }
+            return cov;
+        }
+
 
     TMatrixD SystematicsUtil::combineCovarianceMatrices(
         const std::vector<TMatrixD>& matrices)
@@ -675,6 +805,68 @@ namespace Analysis
         }
 
         return totalVarHist;
+    }
+
+    TH1D SystematicsUtil::RunAllDetVarSystematics(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        const std::string& variableName,
+        const std::vector<double>& detVarGlobalWeights,
+        double nomHistScaleFactor,
+        const std::string& weightColumn
+    )
+    {
+        // Create histograms for each detector variation
+        // Also want to create a vector of weights based on how many events are cut when building the variations
+        std::vector<double> detVarInitEvtNumbers;
+        std::vector<double> detVarFinalEvtNumbers;
+        for (auto detVarNode : detVarNodes) {
+            auto nEventsPtr = detVarNode.Count();
+            detVarInitEvtNumbers.push_back(*nEventsPtr);
+        }
+        std::vector<TH1D> detVarHists = createMatchedDetVarHists(rawDataFrame, detVarNodes, detVarNames, variableName, weightColumn, nominalHist);
+        for (const auto& detVarHist : detVarHists) {
+            double nEvents = 0.0;
+            nEvents = detVarHist.GetEntries();
+            detVarFinalEvtNumbers.push_back(nEvents);
+        }
+
+        std::vector<double> detVarFracKept;
+        for (size_t i = 0; i < detVarNames.size(); ++i) {
+            double fracKept = detVarFinalEvtNumbers[i] / detVarInitEvtNumbers[i];
+            detVarFracKept.push_back(fracKept);
+            std::cout << "Detector Variation: " << detVarNames[i] << " Initial events: " << detVarInitEvtNumbers[i] << " Final events: " << detVarFinalEvtNumbers[i] << " Fraction kept: " << fracKept << std::endl;
+        }
+        std::vector<double> detVarWeights;
+        for (size_t i = 0; i < detVarNames.size(); ++i) {
+            double weight = (detVarFracKept[i] > 0.0) ? (1.0 / detVarFracKept[i]) : 1.0;
+            detVarWeights.push_back(weight * detVarGlobalWeights[i]); // also apply global scaling, e.g. for POT variation.
+        }
+
+        //Print out weights for debugging
+        for (size_t i = 0; i < detVarNames.size(); ++i) {
+            std::cout << "Detector Variation: " << detVarNames[i] << " Weight: " << detVarWeights[i] << std::endl;
+        }
+
+        // Compute covariance matrix from detector variations
+        TMatrixD detVarCov = covarianceMatrixFromDetVars(nominalHist, detVarHists, detVarWeights, nomHistScaleFactor);
+
+        // Plot covariance matrix for debugging (optional)
+        PlotMatrix(detVarCov, "detvar_cov");
+        PlotFractionalCovarianceMatrix(detVarCov, nominalHist, "detvar_frac_cov");
+
+        // Prepare actual uncertainty histogram to return (diagonal elements of covariance)
+        TH1D detVarUncertHist(Form("%s_detvar_uncert", nominalHist.GetName()), Form("%s with Detector Variation Uncertainty;Variable;Events", nominalHist.GetTitle()), nominalHist.GetNbinsX(), nominalHist.GetXaxis()->GetXmin(), nominalHist.GetXaxis()->GetXmax());
+
+        for (int i = 0; i < detVarCov.GetNrows(); ++i)
+        {
+            double var_i = detVarCov(i, i);
+            //double uncert_i = std::sqrt(var_i);
+            detVarUncertHist.SetBinContent(i + 1, var_i);
+        }
+        return detVarUncertHist;
     }
 
 } // namespace Analysis

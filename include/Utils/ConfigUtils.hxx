@@ -32,7 +32,9 @@ enum class SampleType {
     Overlay,
     Dirt,
     Signal,
-    Data
+    Data,
+    DetectorVariationCV,
+    DetectorVariation
 };
 
 inline std::string ToLowerCopy(std::string value)
@@ -55,6 +57,8 @@ inline std::string SampleTypeName(SampleType type)
     case SampleType::Dirt:    return "dirt";
     case SampleType::Signal:  return "signal";
     case SampleType::Data:    return "data";
+    case SampleType::DetectorVariationCV: return "detvarcv";
+    case SampleType::DetectorVariation:   return "detvar";
     }
     return "unknown";
 }
@@ -66,9 +70,11 @@ inline SampleType ParseSampleType(const std::string& token, const std::string& k
     if (token == "dirt")    return SampleType::Dirt;
     if (token == "signal")  return SampleType::Signal;
     if (token == "data")    return SampleType::Data;
+    if (token == "detvarcv") return SampleType::DetectorVariationCV;
+    if (token == "detvar")   return SampleType::DetectorVariation;
 
     throw std::runtime_error("[Config] Invalid sample type in " + key + ": " + token
-                             + " (allowed: beamoff, overlay, dirt, signal, data)");
+                             + " (allowed: beamoff, overlay, dirt, signal, data, detvarcv, detvar)");
 }
 
 inline std::vector<SampleType> ParseSampleTypes(const std::string& typesString,
@@ -103,6 +109,13 @@ inline bool IsOverlaySample(SampleType type) { return type == SampleType::Overla
 inline bool IsDirtSample(SampleType type) { return type == SampleType::Dirt; }
 inline bool IsSignalSample(SampleType type) { return type == SampleType::Signal; }
 inline bool IsDataSample(SampleType type) { return type == SampleType::Data; }
+inline bool IsDetectorVariationCVSample(SampleType type) { return type == SampleType::DetectorVariationCV; }
+inline bool IsDetectorVariationSample(SampleType type) { return type == SampleType::DetectorVariation; }
+inline bool IsDetectorVariationInputSample(SampleType type)
+{
+    return IsDetectorVariationCVSample(type) || IsDetectorVariationSample(type);
+}
+inline bool IsPlottableSample(SampleType type) { return !IsDetectorVariationInputSample(type); }
 
 inline bool ConfigHasKey(const TEnv& cfg, const std::string& key)
 {

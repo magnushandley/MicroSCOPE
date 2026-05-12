@@ -42,10 +42,24 @@ namespace Analysis {
         const std::string& GlobalCVWeightColumn,
         const double& globalScaleFactor
     );
+    std::vector<TH1D> createMatchedDetVarHists(
+        const ROOT::RDF::RNode& CVNode,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        std::string branchName,
+        const std::string& weightColumn,
+        const TH1D& CVNominalHist);
 
     TMatrixD covarianceMatrixFromMultisims(
         const std::vector<TH1D>& universeHists,
         const TH1D& nominalHist
+    );
+
+    TMatrixD covarianceMatrixFromDetVars(
+        const TH1D& nominalHist,
+        const std::vector<TH1D>& detVarHists,
+        const std::vector<double>& detVarWeights,
+        const double nomHistScaleFactor
     );
 
     TMatrixD combineCovarianceMatrices(
@@ -74,6 +88,17 @@ namespace Analysis {
         const ROOT::RDF::RNode& rawDataFrame,
         const std::string& variableName,
         const SystematicsConfig& systConfig
+    );
+
+    TH1D RunAllDetVarSystematics(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        const std::string& variableName,
+        const std::vector<double>& detVarGlobalWeights,
+        double nomHistScaleFactor,
+        const std::string& weightColumn
     );
 
     private:
