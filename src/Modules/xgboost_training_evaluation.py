@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 import uproot
 import pandas as pd
@@ -11,6 +12,9 @@ from sklearn.metrics import roc_auc_score, classification_report
 
 import xgboost as xgb
 from pathlib import Path
+
+SCORE_COLUMN = "bdt_score"
+
 
 def load_root_files_to_df(
     root_files: List[str],
@@ -217,13 +221,121 @@ def add_bdt_score(
     booster: xgb.Booster,
     df: pd.DataFrame,
     feature_columns: List[str],
-    score_column: str = "bdt_score",
+    score_column: str = SCORE_COLUMN,
 ) -> pd.DataFrame:
     """Return a copy of df with an added BDT score column."""
     df_out = df.copy()
     dmat = xgb.DMatrix(df_out[feature_columns])
     df_out[score_column] = booster.predict(dmat)
     return df_out
+
+
+def dedupe_preserve_order(branches: List[str]) -> List[str]:
+    """Return branch names without duplicates, preserving the first occurrence."""
+    seen = set()
+    unique = []
+    for branch in branches:
+        if branch in seen:
+            continue
+        seen.add(branch)
+        unique.append(branch)
+    return unique
+
+
+def validate_no_reserved_score_branch(branches: List[str], arg_name: str) -> None:
+    if SCORE_COLUMN in branches:
+        raise ValueError(
+            f"{arg_name} cannot contain reserved output branch '{SCORE_COLUMN}'"
+        )
+
+
+def resolve_output_branches_for_tree(
+    tree,
+    required_branches: List[str],
+    optional_branches: Optional[List[str]],
+    in_path: str,
+) -> List[str]:
+    """Return output branches present in this tree, failing only for required branches."""
+    available = set(tree.keys())
+    required_unique = dedupe_preserve_order(required_branches)
+    optional_unique = [
+        branch
+        for branch in dedupe_preserve_order(optional_branches or [])
+        if branch not in required_unique
+    ]
+
+    missing_required = [
+        branch for branch in required_unique
+        if branch not in available
+    ]
+    if missing_required:
+        raise ValueError(
+            f"Missing required feature branch(es) in {in_path}: "
+            f"{', '.join(missing_required)}"
+        )
+
+    present_optional = [
+        branch for branch in optional_unique
+        if branch in available
+    ]
+    missing_optional = [
+        branch for branch in optional_unique
+        if branch not in available
+    ]
+    if missing_optional:
+        print(
+            "\n"
+            "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+            "[xgboost] WARNING: requested optional output branches are missing\n"
+            f"[xgboost] File: {in_path}\n"
+            f"[xgboost] Skipping branch(es): {', '.join(missing_optional)}\n"
+            "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n",
+            file=sys.stderr,
+        )
+
+    return required_unique + present_optional
+
+
+def filter_branch_arrays(branch_arrays: dict, allowed_rows: Optional[set]) -> dict:
+    """Apply the held-out-row selection to numpy/awkward arrays by entry index."""
+    if allowed_rows is None:
+        return branch_arrays
+
+    n_entries = len(next(iter(branch_arrays.values()))) if branch_arrays else 0
+    row_mask = np.fromiter(
+        (row in allowed_rows for row in range(n_entries)),
+        dtype=bool,
+        count=n_entries,
+    )
+    return {
+        branch_name: branch_array[row_mask]
+        for branch_name, branch_array in branch_arrays.items()
+    }
+
+
+def load_output_branch_arrays(
+    in_path: str,
+    tree_name: str,
+    required_branches: List[str],
+    optional_branches: Optional[List[str]] = None,
+    allowed_rows: Optional[set] = None,
+) -> dict:
+    """Read branch arrays for output preservation using awkward-compatible uproot arrays."""
+    with uproot.open(in_path) as f:
+        tree = f[tree_name]
+        branches = resolve_output_branches_for_tree(
+            tree,
+            required_branches,
+            optional_branches,
+            in_path,
+        )
+        branch_arrays = tree.arrays(
+            expressions=branches,
+            library="ak",
+            how=dict,
+        )
+
+    return filter_branch_arrays(branch_arrays, allowed_rows)
 
 
 def write_trees_to_root(
@@ -237,30 +349,19 @@ def write_trees_to_root(
     out_path : str
         Output ROOT filename.
     trees : dict
-        Mapping of tree_name -> DataFrame to write.
+        Mapping of tree_name -> dict of branch name to numpy/awkward array.
     """
 
     with uproot.recreate(out_path) as f:
-        for tree_name, df in trees.items():
-            # Drop non-numeric columns (e.g. source_file paths)
-            cols_numeric = [
-                c for c in df.columns
-                if pd.api.types.is_numeric_dtype(df[c])
-            ]
-            branch_arrays = {c: df[c].to_numpy() for c in cols_numeric}
-
+        for tree_name, branch_arrays in trees.items():
             tree_path = [part for part in tree_name.split("/") if part]
             tree_dir = f
             for directory in tree_path[:-1]:
                 tree_dir = tree_dir.mkdir(directory)
 
             tree_leaf_name = tree_path[-1]
-            branch_types = {
-                branch_name: branch_array.dtype
-                for branch_name, branch_array in branch_arrays.items()
-            }
-            tree_dir.mktree(tree_leaf_name, branch_types)
-            tree_dir[tree_leaf_name].extend(branch_arrays)
+            writable_tree = tree_dir.mktree(tree_leaf_name, branch_arrays)
+            writable_tree.extend(branch_arrays)
 
 
 def score_single_root_file(
@@ -269,12 +370,14 @@ def score_single_root_file(
     out_path: str,
     tree_name: str,
     feature_columns: List[str],
+    keep_branches: Optional[List[str]] = None,
     allowed_rows: Optional[set] = None,
 ):
     """Load one ROOT file, add bdt_score branch, and write to a new ROOT file.
 
     The output file will contain a TTree with the same name as `tree_name`.
-    Non-numeric helper columns (e.g. source_file) are dropped automatically.
+    Requested output branches are read separately from the input file so scalar
+    and vector branches can be preserved without routing them through pandas.
     """
     df = load_root_files_to_df(
         [in_path],
@@ -291,10 +394,36 @@ def score_single_root_file(
         after = len(df)
         print(f"[xgboost] Filtering {in_path} to test entries: {before} -> {after}")
 
-    df_scored = add_bdt_score(booster, df, feature_columns=feature_columns, score_column="bdt_score")
+    df_scored = add_bdt_score(
+        booster,
+        df,
+        feature_columns=feature_columns,
+        score_column=SCORE_COLUMN,
+    )
+
+    branch_arrays = load_output_branch_arrays(
+        in_path,
+        tree_name,
+        required_branches=feature_columns,
+        optional_branches=keep_branches,
+        allowed_rows=allowed_rows,
+    )
+    branch_arrays[SCORE_COLUMN] = df_scored[SCORE_COLUMN].to_numpy()
+
+    n_scores = len(branch_arrays[SCORE_COLUMN])
+    mismatched = [
+        branch_name
+        for branch_name, branch_array in branch_arrays.items()
+        if len(branch_array) != n_scores
+    ]
+    if mismatched:
+        raise ValueError(
+            f"Output branch length mismatch for {in_path}: "
+            f"{', '.join(mismatched)} do not match {SCORE_COLUMN}"
+        )
 
     # Write a single tree with the original tree_name
-    write_trees_to_root(out_path, {tree_name: df_scored})
+    write_trees_to_root(out_path, {tree_name: branch_arrays})
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -320,6 +449,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tree-name", required=True, help="Input and output TTree name.")
     parser.add_argument("--branches", nargs="+", required=True, help="Feature branches to train on.")
+    parser.add_argument(
+        "--keep-branches",
+        nargs="*",
+        default=[],
+        help=(
+            "Additional branches to preserve in scored ROOT outputs. "
+            "These are written alongside --branches and bdt_score, but are not used for training."
+        ),
+    )
     parser.add_argument("--output-dir", default=".", help="Directory for model and scored ROOT outputs.")
     parser.add_argument("--model-output", default="xgb_bdt.json", help="Model filename or path.")
     parser.add_argument("--test-size", type=float, default=0.5, help="Held-out test fraction.")
@@ -345,6 +483,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--tree-name cannot be empty")
     if not args.branches:
         raise ValueError("--branches must contain at least one branch")
+    validate_no_reserved_score_branch(args.branches, "--branches")
+    validate_no_reserved_score_branch(args.keep_branches, "--keep-branches")
     if len(args.bkg_sample_weights) != len(args.bkg_files):
         raise ValueError(
             "--bkg-sample-weights must have the same length as --bkg-files: "
@@ -380,6 +520,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    print("[xgboost] Required output feature branches:")
+    for branch in dedupe_preserve_order(args.branches):
+        print(f"  {branch}")
+    if args.keep_branches:
+        print("[xgboost] Optional output keep branches:")
+        for branch in dedupe_preserve_order(args.keep_branches):
+            print(f"  {branch}")
+    print("[xgboost] Always-added output branch:")
+    print(f"  {SCORE_COLUMN}")
 
     df_bkg = load_root_files_to_df(
         args.bkg_files,
@@ -447,6 +596,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             str(scored_path),
             args.tree_name,
             args.branches,
+            keep_branches=args.keep_branches,
             allowed_rows=allowed,
         )
         print(f"[xgboost] Wrote scored background file: {scored_path}")
@@ -461,13 +611,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             str(scored_path),
             args.tree_name,
             args.branches,
+            keep_branches=args.keep_branches,
             allowed_rows=allowed,
         )
         print(f"[xgboost] Wrote scored signal file: {scored_path}")
 
     stem = Path(args.data_file).stem
     scored_path = out_dir / f"{stem}_xgb_scored.root"
-    score_single_root_file(model, args.data_file, str(scored_path), args.tree_name, args.branches)
+    score_single_root_file(
+        model,
+        args.data_file,
+        str(scored_path),
+        args.tree_name,
+        args.branches,
+        keep_branches=args.keep_branches,
+    )
     print(f"[xgboost] Wrote scored data file: {scored_path}")
 
     return 0
