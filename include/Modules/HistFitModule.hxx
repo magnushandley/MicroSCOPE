@@ -3,10 +3,12 @@
 
 #include "Framework/Module.hxx"
 #include "Utils/Plotter.hxx"
+#include "Utils/ConfigUtils.hxx"
 
 #include <ROOT/RDataFrame.hxx>
 #include <TChain.h>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <RooStats/HistFactory/MakeModelAndMeasurementsFast.h>
@@ -36,8 +38,7 @@ private:
 
     // Helper: build the dataframe vector from a file list
     std::vector<ROOT::RDF::RNode> BuildDataFrames(const std::vector<std::string>& files,
-                                            const std::string& treeName,
-                                            const std::vector<double>& testFractions) const;
+                                            const std::string& treeName) const;
 
     void SaveHistograms(const std::vector<TH1D>& hists,
                     const std::vector<std::string>& labels,
@@ -46,15 +47,20 @@ private:
 
     std::unique_ptr<RooWorkspace> BuildModelWorkspace(
                                             std::vector<TH1D>& histVec,
-                                            const std::vector<std::string>& labels,
+                                            const std::vector<std::string>& histNames,
+                                            const std::vector<SampleType>& sampleTypes,
                                             const std::string& inputFile) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
     double CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const;
+    double EffectiveTestFraction(std::size_t sampleIndex) const;
+    double EffectiveSampleWeight(std::size_t sampleIndex) const;
+    bool IsFitBackground(SampleType type) const;
+    std::string SanitiseHistName(const std::string& label) const;
     double BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
-        std::vector<std::string> sampleLabels,
-        std::vector<double> sampleWeights,
+        const std::vector<SampleType>& sampleTypes,
+        const std::vector<double>& sampleWeights,
         double signalBinThreshold) const;
 
     /// Configuration
@@ -62,11 +68,13 @@ private:
     std::string        fTreeName;        ///< name of the input TTree
     bool fBlindData;     
     std::vector<std::string> fSampleLabels; ///< Labels for the samples, e.g. "data", "overlay", "signal"
+    std::vector<SampleType> fSampleTypes; ///< Analysis role for each sample
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     double fDataPOT;    ///< POT for the data sample
     double fSignalPOT;  ///< POT for the signal MC sample
     double fSimulatedSignalU2; ///< The U^2 value used in the generator
     std::vector<double> fTestFractions; ///< Fractions of events to keep for each sample (for BDT test samples)
+    double fRateScaling; ///< Optional global rate scaling for histogram contents
 
 
     /// Working objects

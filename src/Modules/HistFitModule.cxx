@@ -5,10 +5,13 @@
 #include <TFile.h>
 #include <TString.h>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <vector>
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
+#include <unordered_map>
 #include <ROOT/RDataFrame.hxx>
 #include <ROOT/RDFHelpers.hxx>
 #include <TTree.h>
@@ -25,10 +28,57 @@
 #include <RooStats/ProfileLikelihoodTestStat.h>
 #include <RooStats/HypoTestInverterPlot.h> 
 
-#include "TRandom3.h"
-
-
 using namespace Analysis;
+
+namespace {
+
+std::string TrimCopy(const std::string& value)
+{
+    const auto first = value.find_first_not_of(" \t\n\r");
+    if (first == std::string::npos) return "";
+
+    const auto last = value.find_last_not_of(" \t\n\r");
+    return value.substr(first, last - first + 1);
+}
+
+std::string StripOptionalQuotes(std::string value)
+{
+    if (value.size() >= 2 &&
+        ((value.front() == '"'  && value.back() == '"') ||
+         (value.front() == '\'' && value.back() == '\''))) {
+        value = value.substr(1, value.size() - 2);
+    }
+    return value;
+}
+
+std::vector<std::string> ParseSampleLabels(const std::string& labelsString)
+{
+    std::vector<std::string> labels;
+
+    if (labelsString.find(',') != std::string::npos) {
+        std::stringstream ssLabels{labelsString};
+        std::string labelToken;
+        while (std::getline(ssLabels, labelToken, ',')) {
+            labelToken = StripOptionalQuotes(TrimCopy(labelToken));
+            if (!labelToken.empty()) {
+                labels.push_back(labelToken);
+            }
+        }
+    } else {
+        std::stringstream ssLabels{labelsString};
+        std::string labelToken;
+        while (ssLabels >> labelToken) {
+            labelToken = StripOptionalQuotes(TrimCopy(labelToken));
+            if (!labelToken.empty()) {
+                labels.push_back(labelToken);
+            }
+        }
+    }
+
+    return labels;
+}
+
+} // namespace
 
 HistFitModule::HistFitModule(const TEnv& cfg)
     : Module(cfg)
@@ -37,6 +87,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fSignalPOT  (cfg.GetValue("HistFitModule.SignalPOT", 1.0e20)) // We only need data and signal POT because the backgrounds are scaled to data POT anyway
     , fSimulatedSignalU2(cfg.GetValue("HistFitModule.SimulatedSignalU2", 1.0e-4))
     , fBlindData  (cfg.GetValue("HistFitModule.BlindData", false))
+    , fRateScaling(cfg.GetValue("HistFitModule.RateScaling", 1.0))
 {
 
     std::stringstream ssInput{cfg.GetValue("HistFitModule.InputFiles", "")};
@@ -46,26 +97,10 @@ HistFitModule::HistFitModule(const TEnv& cfg)
         fInputFiles.push_back(inputItem);
     }
 
-    const std::string labelsString = cfg.GetValue("HistFitModule.SampleLabels", "");
-    std::stringstream ssLabels{labelsString};
-    std::string labelToken;
-    while (std::getline(ssLabels, labelToken, ',')) {
-        // trim leading/trailing whitespace
-        labelToken.erase(0, labelToken.find_first_not_of(" \t\n\r"));
-        labelToken.erase(labelToken.find_last_not_of(" \t\n\r") + 1);
+    fSampleLabels = ParseSampleLabels(cfg.GetValue("HistFitModule.SampleLabels", ""));
 
-        // Remove optional surrounding quotes so labels like "Run 3 data" are kept intact
-        if (labelToken.size() >= 2 &&
-           ((labelToken.front() == '"'  && labelToken.back() == '"') ||
-            (labelToken.front() == '\'' && labelToken.back() == '\'')))
-        {
-            labelToken = labelToken.substr(1, labelToken.size() - 2);
-        }
-
-        if (!labelToken.empty()) {
-            fSampleLabels.push_back(labelToken);
-        }
-    }
+    const std::string sampleTypesKey = "HistFitModule.SampleTypes";
+    fSampleTypes = ParseSampleTypes(RequireConfigValue(cfg, sampleTypesKey), sampleTypesKey);
 
     std::stringstream ssWeights{cfg.GetValue("HistFitModule.SampleWeights", "")};
     double weight;
@@ -79,27 +114,97 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     while (ssTestFractions >> testFraction) {
         fTestFractions.push_back(testFraction);
     }
+
+    const std::size_t nSamples = fInputFiles.size();
+    if (nSamples == 0) {
+        throw std::runtime_error("[HistFitModule] No input files specified.");
+    }
+    if (fSampleLabels.size() != nSamples) {
+        throw std::runtime_error("[HistFitModule] SampleLabels count (" + std::to_string(fSampleLabels.size())
+                                 + ") does not match InputFiles count (" + std::to_string(nSamples) + ").");
+    }
+    if (fSampleTypes.size() != nSamples) {
+        throw std::runtime_error("[HistFitModule] SampleTypes count (" + std::to_string(fSampleTypes.size())
+                                 + ") does not match InputFiles count (" + std::to_string(nSamples) + ").");
+    }
+    if (fSampleWeights.size() != nSamples) {
+        throw std::runtime_error("[HistFitModule] SampleWeights count (" + std::to_string(fSampleWeights.size())
+                                 + ") does not match InputFiles count (" + std::to_string(nSamples) + ").");
+    }
+    if (!fTestFractions.empty() && fTestFractions.size() != nSamples) {
+        throw std::runtime_error("[HistFitModule] TestFractions count (" + std::to_string(fTestFractions.size())
+                                 + ") does not match InputFiles count (" + std::to_string(nSamples) + ").");
+    }
+    if (fRateScaling <= 0.0) {
+        throw std::runtime_error("[HistFitModule] RateScaling must be positive.");
+    }
+
+    for (std::size_t i = 0; i < fTestFractions.size(); ++i) {
+        const double testFraction = fTestFractions[i];
+        if (testFraction == 0.0) {
+            throw std::runtime_error("[HistFitModule] TestFractions entry " + std::to_string(i)
+                                     + " is zero; use a non-zero fraction or omit TestFractions.");
+        }
+        if (std::abs(testFraction) > 1.0) {
+            throw std::runtime_error("[HistFitModule] TestFractions entry " + std::to_string(i)
+                                     + " has magnitude greater than 1.");
+        }
+    }
+
+    const auto nDataSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsDataSample(type); });
+    const auto nSignalSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsSignalSample(type); });
+    const auto nFitBackgroundSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [this](SampleType type) { return IsFitBackground(type); });
+    const auto nDetVarCVSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsDetectorVariationCVSample(type); });
+    const auto nDetVarSamples = std::count_if(
+        fSampleTypes.begin(),
+        fSampleTypes.end(),
+        [](SampleType type) { return IsDetectorVariationSample(type); });
+
+    if (nDataSamples != 1) {
+        throw std::runtime_error("[HistFitModule] SampleTypes must contain exactly one data sample.");
+    }
+    if (nSignalSamples == 0) {
+        throw std::runtime_error("[HistFitModule] SampleTypes must contain at least one signal sample.");
+    }
+    if (nFitBackgroundSamples == 0) {
+        throw std::runtime_error("[HistFitModule] SampleTypes must contain at least one beamoff, overlay, or dirt background sample.");
+    }
+    if (nDetVarSamples > 0 && nDetVarCVSamples == 0) {
+        throw std::runtime_error("[HistFitModule] SampleTypes contains detvar samples but no detvarcv sample.");
+    }
+    if (nDetVarCVSamples > 1) {
+        throw std::runtime_error("[HistFitModule] SampleTypes must contain at most one detvarcv sample.");
+    }
+    if (nDetVarCVSamples == 1 && nDetVarSamples == 0) {
+        std::cout << "[HistFitModule] Warning: detvarcv sample configured without detvar samples; "
+                  << "detector variation systematics will be skipped in stage 1.\n";
+    }
 }
 
 
 //------------------------------------------------------------------------------
 std::vector<ROOT::RDF::RNode>
 HistFitModule::BuildDataFrames(const std::vector<std::string>& files,
-                               const std::string& treeName,
-                               const std::vector<double>& testFractions) const
+                               const std::string& treeName) const
 {
-    //std::vector<std::unique_ptr<ROOT::RNode>> dfVec;
-
-    //Because we need to filter, the return type is an RNode
-    std::cout << "Debug 1" << std::endl;
     std::vector<ROOT::RDF::RNode> nodes;
     std::cout << "[HistFitModule] Building DataFrames for " << files.size() << " input files\n";
     nodes.reserve(files.size());
-    std::cout << "[HistFitModule] Nodes size reserved: " << nodes.size() << std::endl;
-    std::cout << "Debug 2" << std::endl;
 
-    int it = 0;
-    for (const auto& fname : files) {
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        const auto& fname = files[i];
         auto file = TFile::Open(fname.c_str());
         if (!file || file->IsZombie()) {
             throw std::runtime_error("[HistFitModule] Cannot open file: " + fname);
@@ -110,22 +215,16 @@ HistFitModule::BuildDataFrames(const std::vector<std::string>& files,
         }
         auto RDF = std::make_unique<ROOT::RDataFrame>(*tree);
         
-        // Different from all other modules: apply test sample fraction if provided
-        // Default is 1.0 if not provided
-        double testFraction = 1.0;
-        if (testFractions.size() != 0) {
-            testFraction = testFractions[it];
-        }
-        int nEvents = RDF->Count().GetValue();
-        int nKeep = static_cast<int>(nEvents * std::abs(testFraction));
-        // Depending on whether we want to keep the first or last fraction, the sign of testFraction is different
-        //ROOT::RDF::RNode filteredRDF;
-        if (testFraction > 0)
-            nodes.push_back(RDF->Range(0, nKeep)); // Take first nKeep events
-        else
-            nodes.push_back(RDF->Range(nEvents - nKeep, nEvents)); // Take last nKeep events
+        const double testFraction = EffectiveTestFraction(i);
+        const auto nEvents = RDF->Count().GetValue();
+        const auto nKeep = static_cast<ULong64_t>(nEvents * std::abs(testFraction));
 
-        ++it;
+        // Depending on whether we want to keep the first or last fraction, the sign of testFraction is different
+        if (testFraction > 0) {
+            nodes.push_back(RDF->Range(0, nKeep)); // Take first nKeep events
+        } else {
+            nodes.push_back(RDF->Range(nEvents - nKeep, nEvents)); // Take last nKeep events
+        }
     }
     if (nodes.empty())
         throw std::runtime_error("[HistFitModule] No data frames created!");
@@ -139,7 +238,10 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
                     const std::string& fileName)
 {
     if (hists.size() != labels.size()) {
-        throw std::runtime_error("[Plotter] Number of histograms and labels do not match in SaveHistograms");
+        throw std::runtime_error("[HistFitModule] Number of histograms and labels do not match in SaveHistograms");
+    }
+    if (weights.size() != hists.size()) {
+        throw std::runtime_error("[HistFitModule] Number of histograms and weights do not match in SaveHistograms");
     }
 
     TFile outFile(fileName.c_str(), "RECREATE");
@@ -154,10 +256,7 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
         // Ensure we have Sumw2 so that errors are stored and scaled correctly
         h.Sumw2();
 
-        // Apply the sample weight if provided
-        if (i < weights.size()) {
-            h.Scale(weights[i]);
-        }
+        h.Scale(weights[i]);
 
         // Name the histogram according to the sample label
         h.SetName(labels[i].c_str());
@@ -172,9 +271,16 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
 
  std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
     std::vector<TH1D>& histVec,
-    const std::vector<std::string>& labels,
+    const std::vector<std::string>& histNames,
+    const std::vector<SampleType>& sampleTypes,
     const std::string& inputFile) const
 {
+    if (histVec.size() != histNames.size()) {
+        throw std::runtime_error("[HistFitModule] Histogram count does not match histogram name count.");
+    }
+    if (histVec.size() != sampleTypes.size()) {
+        throw std::runtime_error("[HistFitModule] Histogram count does not match sample type count.");
+    }
 
     bool bfile = gSystem->AccessPathName(inputFile.c_str());
     if (bfile) {
@@ -187,8 +293,8 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
         }
     }
 
-    // Build a RooStats HistFactory model from the input histograms, creating s and s+b models
-    // Convention: last histogram in histVec is data, second last is signal, all others are backgrounds
+    // Build a RooStats HistFactory model from the input histograms, creating s and s+b models.
+    // Samples are selected by SampleTypes rather than by position in the input list.
     std::cout << "[HistFitModule] Building model workspace from histograms" << std::endl;
     RooStats::HistFactory::Measurement meas("meas", "meas");
     std::cout << "[HistFitModule] Measurement created" << std::endl;
@@ -207,57 +313,46 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     // Create a channel
 
     RooStats::HistFactory::Channel chan("channel1");
-    //TH1D& hData = histVec.back();
-    chan.SetData(labels.back(), inputFile);
-    std::cout << "[HistFitModule] Data sample set: " << labels.back() << std::endl;
+
+    auto dataIt = std::find_if(
+        sampleTypes.begin(),
+        sampleTypes.end(),
+        [](SampleType type) { return IsDataSample(type); });
+    if (dataIt == sampleTypes.end()) {
+        throw std::runtime_error("[HistFitModule] Cannot build model without a data histogram.");
+    }
+
+    const std::size_t dataIndex = static_cast<std::size_t>(std::distance(sampleTypes.begin(), dataIt));
+    chan.SetData(histNames[dataIndex], inputFile);
+    std::cout << "[HistFitModule] Data sample set: " << histNames[dataIndex] << std::endl;
     chan.SetStatErrorConfig(0.02, "Poisson"); // Investigate impact of this
 
+    for (std::size_t i = 0; i < histVec.size(); ++i) {
+        const SampleType sampleType = sampleTypes[i];
+        if (IsDataSample(sampleType)) {
+            continue;
+        }
+        if (IsDetectorVariationInputSample(sampleType)) {
+            std::cout << "[HistFitModule] Skipping detector variation sample in stage-1 model: "
+                      << histNames[i] << std::endl;
+            continue;
+        }
 
-    // Now, create some samples
+        RooStats::HistFactory::Sample sample(histNames[i], histNames[i], inputFile);
+        if (IsSignalSample(sampleType)) {
+            sample.AddNormFactor("SigXsecOverSim", 1, 0, 0.01);
+            std::cout << "[HistFitModule] Added signal sample: " << histNames[i] << std::endl;
+        } else if (IsFitBackground(sampleType)) {
+            sample.ActivateStatError();
+            std::cout << "[HistFitModule] Added background sample: " << histNames[i]
+                      << " (" << SampleTypeName(sampleType) << ")" << std::endl;
+        } else {
+            throw std::runtime_error("[HistFitModule] Unsupported sample type in HistFactory model: "
+                                     + SampleTypeName(sampleType));
+        }
 
-    // Create the signal sample
-    //TH1D& hsig = histVec[histVec.size() - 2];
-    //RooStats::HistFactory::Sample signal(hsig.GetName());
-    RooStats::HistFactory::Sample signal(labels[histVec.size() - 2], labels[histVec.size() - 2], inputFile);
-    std::cout << "[HistFitModule] Signal sample created" << std::endl;
-    std::cout << "[HistFitModule] Signal sample label: " << labels[histVec.size() - 2] << std::endl;
-    //signal.SetHisto(&hsig);
-    signal.AddNormFactor("SigXsecOverSim", 1, 0, 0.01); 
-    chan.AddSample(signal);
-
-    std::cout << "[HistFitModule] Signal sample added" << std::endl;
-
-    // Background 1
-    //TH1D& h1 = histVec[0];
-    RooStats::HistFactory::Sample background1(labels[0], labels[0], inputFile);
-    std::cout << "[HistFitModule] Background 1 sample created" << std::endl;
-    std::cout << "[HistFitModule] Background 1 label: " << labels[0] << std::endl;
-    //background1.SetHisto(&h1);
-    background1.ActivateStatError();
-    //background1.AddOverallSys("syst2", 0.95, 1.05);
-    chan.AddSample(background1);
-
-    std::cout << "[HistFitModule] Background 1 sample added" << std::endl;
-
-    // Background 2
-    //TH1D& h2 = histVec[1];
-    RooStats::HistFactory::Sample background2(labels[1], labels[1], inputFile);
-    //background2.SetHisto(&h2);
-    background2.ActivateStatError();
-    //background2.AddOverallSys("syst3", 0.95, 1.05);
-    chan.AddSample(background2);
-
-    std::cout << "[HistFitModule] Background 2 sample added" << std::endl;
-
-    // Background 3
-    //TH1D& h3 = histVec[2];
-    //RooStats::HistFactory::Sample background3(labels[2], labels[2], inputFile);
-    //background3.SetHisto(&h3);
-    //background3.ActivateStatError();
-    //background3.AddOverallSys("syst3", 0.95, 1.05);
-    //chan.AddSample(background3);
-
-    std::cout << "[HistFitModule] Background 3 sample added" << std::endl;
+        chan.AddSample(sample);
+    }
 
     // Done with this channel
     // Add it to the measurement:
@@ -316,21 +411,62 @@ Long64_t HistFitModule::EntryCount() const
     return 1; // Dummy, nothing per-event
 }
 
+double HistFitModule::EffectiveTestFraction(std::size_t sampleIndex) const
+{
+    if (sampleIndex >= fInputFiles.size()) {
+        throw std::runtime_error("[HistFitModule] EffectiveTestFraction sample index out of range.");
+    }
+    return fTestFractions.empty() ? 1.0 : fTestFractions[sampleIndex];
+}
+
+double HistFitModule::EffectiveSampleWeight(std::size_t sampleIndex) const
+{
+    if (sampleIndex >= fSampleWeights.size()) {
+        throw std::runtime_error("[HistFitModule] EffectiveSampleWeight sample index out of range.");
+    }
+    return fSampleWeights[sampleIndex] / std::abs(EffectiveTestFraction(sampleIndex));
+}
+
+bool HistFitModule::IsFitBackground(SampleType type) const
+{
+    return IsOverlaySample(type) || IsDirtSample(type) || type == SampleType::BeamOff;
+}
+
+std::string HistFitModule::SanitiseHistName(const std::string& label) const
+{
+    std::string safeName;
+    safeName.reserve(label.size());
+
+    for (unsigned char ch : label) {
+        safeName.push_back(std::isalnum(ch) || ch == '_' ? static_cast<char>(ch) : '_');
+    }
+
+    if (safeName.empty()) {
+        safeName = "sample";
+    }
+    if (std::isdigit(static_cast<unsigned char>(safeName.front()))) {
+        safeName = "h_" + safeName;
+    }
+
+    return safeName;
+}
+
 double HistFitModule::BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
-    std::vector<std::string> sampleLabels,
-    std::vector<double> sampleWeights,
+    const std::vector<SampleType>& sampleTypes,
+    const std::vector<double>& sampleWeights,
     double signalBinThreshold) const
 {
     // Simple sensitivity estimate based on S/sqrt(B) in the high scoring region of the BDT score histogram
-    
+    if (bdtScoreVec.size() != sampleTypes.size() || bdtScoreVec.size() != sampleWeights.size()) {
+        throw std::runtime_error("[HistFitModule] BasicSensitivityEstimate input vector sizes do not match.");
+    }
+
     double signalCount = 0.0;
     double bkgCount = 0.0;
 
     for (size_t i = 0; i < bdtScoreVec.size(); ++i) {
         const TH1D& hist = bdtScoreVec[i];
-        const std::string &label = sampleLabels[i];
-        const bool isSignal = (label.find("signal") != std::string::npos);
-        const bool isData   = (label.find("data")   != std::string::npos);
+        const SampleType sampleType = sampleTypes[i];
         const double weight = sampleWeights[i];
 
         // Sum entries above the threshold
@@ -338,11 +474,9 @@ double HistFitModule::BasicSensitivityEstimate(const std::vector<TH1D>& bdtScore
             double binCenter = hist.GetBinCenter(bin);
             if (binCenter >= signalBinThreshold) {
                 double binContent = hist.GetBinContent(bin) * weight;
-                if (isSignal) {
+                if (IsSignalSample(sampleType)) {
                     signalCount += binContent;
-                } else if (isData) {
-                    // Do nothing for data
-                } else {
+                } else if (IsFitBackground(sampleType)) {
                     bkgCount += binContent;
                 }
             }
@@ -351,6 +485,10 @@ double HistFitModule::BasicSensitivityEstimate(const std::vector<TH1D>& bdtScore
 
     std::cout << "Basic sensitivity estimate: Signal count = " << signalCount
               << ", Background count = " << bkgCount << std::endl;
+    if (bkgCount <= 0.0) {
+        std::cout << "[HistFitModule] Background count is zero; returning sensitivity estimate of 0." << std::endl;
+        return 0.0;
+    }
     double sensitivity = signalCount / std::sqrt(bkgCount);
     return sensitivity;
 
@@ -360,121 +498,87 @@ double HistFitModule::BasicSensitivityEstimate(const std::vector<TH1D>& bdtScore
 
 void HistFitModule::Initialise()
 {
-    RNodes = BuildDataFrames(fInputFiles, fTreeName, fTestFractions);
+    RNodes = BuildDataFrames(fInputFiles, fTreeName);
 
-    // Create new sample weights based on the fact that we might be only using part of the samples
+    std::vector<std::string> histNames;
+    histNames.reserve(fSampleLabels.size());
+    std::unordered_map<std::string, int> histNameCounts;
 
-    std::vector<double> sampleWeights;
-    for (size_t i = 0; i < RNodes.size(); ++i) {
-        sampleWeights.push_back(fSampleWeights[i]/std::abs(fTestFractions[i]));
+    for (const auto& label : fSampleLabels) {
+        const std::string baseName = SanitiseHistName(label);
+        const int duplicateIndex = histNameCounts[baseName]++;
+        histNames.push_back(duplicateIndex == 0 ? baseName : baseName + "_" + std::to_string(duplicateIndex));
     }
-
-    std::cout << "Debug 3" << std::endl;
 
     // Raw BDT scores are saved as "bdt_score", with a range of -1 to 1
     // We apply the logit transformation to spread out high bdt scores
 
-    for (int i=0; i<RNodes.size(); i++){
+    std::vector<TH1D> bdtScoreVec;
+    std::vector<std::string> fitLabels;
+    std::vector<std::string> fitHistNames;
+    std::vector<SampleType> fitSampleTypes;
+    std::vector<double> fitSampleWeights;
+
+    for (std::size_t i = 0; i < RNodes.size(); ++i) {
+        if (IsDetectorVariationInputSample(fSampleTypes[i])) {
+            std::cout << "[HistFitModule] Skipping detector variation input in stage-1 nominal fit: "
+                      << fSampleLabels[i] << " (" << SampleTypeName(fSampleTypes[i]) << ")\n";
+            continue;
+        }
+
         RNodes[i] = RNodes[i].Define("logit_bdt",
             [](float score) {
                 //float s = (score + 1.0f) / 2.0f; //rescale from [-1,1] to [0,1]
                 return std::log(score / (1.0f - score));
             },
             {"bdt_score"});
-    }
 
-    std::cout << "Debug 4" << std::endl;
-
-    //Want to initialise histograms based on the maximum value of overlay/data
-    
-    double maxBkg = 10.0; //initial high value
-    for (int i=1; i < RNodes.size(); ++i){
-        auto maxInRNode = RNodes[i].Max("logit_bdt").GetValue();
-        if (maxInRNode < maxBkg) maxBkg = maxInRNode;
-    }
-
-    std::vector<TH1D> bdtScoreVec;
-    for (size_t i = 0; i < RNodes.size(); ++i)
         bdtScoreVec.push_back(
             Plotter::CreateTH1DFromRNode(
                 RNodes[i],
-                ("logit_bdt_score_" + fSampleLabels[i]).c_str(),
-                "logit_bdt", 
+                ("logit_bdt_score_" + histNames[i]).c_str(),
+                "logit_bdt",
                 "Logit BDT Score",
                 "Count",
                 10.0, -5.0, 5.0,
                 false, // removeVectorDuplicates
                 true));   // createOverFlowBin
 
+        fitLabels.push_back(fSampleLabels[i]);
+        fitHistNames.push_back(histNames[i]);
+        fitSampleTypes.push_back(fSampleTypes[i]);
+        fitSampleWeights.push_back(EffectiveSampleWeight(i));
+    }
+
+    if (bdtScoreVec.empty()) {
+        throw std::runtime_error("[HistFitModule] No fit histograms were created.");
+    }
+
     //Scale every element by rate scaling and every bin error by sqrt(rate scaling)
-    std::vector<TH1D> bdtScoreVecFakeScaling;
-    double rateScaling = 1.86;
-    for (size_t i = 0; i < RNodes.size(); ++i){
+    std::vector<TH1D> bdtScoreVecRateScaled;
+    for (size_t i = 0; i < bdtScoreVec.size(); ++i){
         TH1D hOriginal = bdtScoreVec[i];
         TH1D hScaled = hOriginal;
         for (int bin = 1; bin <= hOriginal.GetNbinsX(); ++bin){
             double originalBinContent = hOriginal.GetBinContent(bin);
             double originalBinError = hOriginal.GetBinError(bin);
-            double scaledBinContent = originalBinContent * rateScaling;
-            double scaledBinError = originalBinError * sqrt(rateScaling);
+            double scaledBinContent = originalBinContent * fRateScaling;
+            double scaledBinError = originalBinError * sqrt(fRateScaling);
             hScaled.SetBinContent(bin, scaledBinContent);
             hScaled.SetBinError(bin, scaledBinError);
         }
-        bdtScoreVecFakeScaling.push_back(hScaled);
+        bdtScoreVecRateScaled.push_back(hScaled);
     }
 
-    std::cout << "Debug 5" << std::endl;
-
-    // TEST OF CLS INFRASTRUCTURE - manually set data histogram to be the sum of bkgd histograms
-    
-    TRandom3 rng(0); //  
-    
-    double signalStrength = 0.0;
-
-    TH1D fakeDataHist("fakeDataHist", "Fake Data Histogram", 10, -5.0, 5.0f);
-    for (int i = 1; i < 11; ++i){
-        double fakeDataBinEntry = 0.0;
-        double fakeDataBinError = 0.0;
-        double weightedBkgBin = 0.0;
-        double SignalBin = 0.0;
-        double weightedSignalBin = 0.0;
-        for (int j = 0; j < 3; ++j){
-            double rawBkgBin = 0.0;
-            rawBkgBin = bdtScoreVec[j].GetBinContent(i);
-            SignalBin = bdtScoreVec[bdtScoreVec.size() - 2].GetBinContent(i);
-            SignalBin *= signalStrength; // Scale signal by some strength
-            std::cout << "Raw bkg bin content for bin " << i << " of sample " << j << ": " << rawBkgBin << std::endl;
-            weightedBkgBin = rawBkgBin * sampleWeights[j];
-            fakeDataBinEntry += (weightedBkgBin + SignalBin);
-        }
-        fakeDataBinError = sqrt(fakeDataBinEntry); // Poisson errors
-        //Random gaussian fluctuation to add
-
-        double fluctuation = 1.0 *rng.Gaus(0.0, fakeDataBinError);
-        fakeDataBinEntry += fluctuation;
-        std::cout << "Bin " << i << ": fake data bin entry before fluctuation: " << fakeDataBinEntry - fluctuation << ", after fluctuation: " << fakeDataBinEntry << std::endl;
-        if (i == 10) std::cout << "Fluctuation in last bin: " << fluctuation << std::endl;
-        if (fakeDataBinEntry < 0.0) fakeDataBinEntry = 0.0; // No negative entries
-        fakeDataHist.SetBinContent(i, fakeDataBinEntry);
-        //fakeDataHist.SetBinError(i, fakeDataBinError);
-        fakeDataHist.SetBinError(i, 0.002);
-    }
-    // Overwrite the data histogram in the vector
-    //bdtScoreVec[bdtScoreVec.size() - 1] = fakeDataHist;
-
-    // End of test code
-
-    std::cout << "Debug 7" << std::endl;
-             
-    HistFitModule::SaveHistograms(bdtScoreVecFakeScaling, fSampleLabels, sampleWeights, "bdt_score_histograms_tmp_4.root");
+    HistFitModule::SaveHistograms(bdtScoreVecRateScaled, fitHistNames, fitSampleWeights, "bdt_score_histograms_tmp_4.root");
 
     //std::vector<double> placeholderweights = {1.0, 1.0, 1.0, 1.0, 1.0};
 
-    Plotter::BlindedMCSignalPlot(bdtScoreVecFakeScaling,
-                        fSampleLabels,
+    Plotter::BlindedMCSignalPlot(bdtScoreVecRateScaled,
+                        fitLabels,
                         "bdt_score_blinded_hist_tmva_histfitmodule",
                         false, // logy
-                        sampleWeights); // blinded data
+                        fitSampleWeights); // blinded data
 
     // Save histograms to temp file to match implementation in the RooFit examples. Could maybe
     // be done directly in memory but right now it's nice to verify you're passing in correctly
@@ -483,16 +587,13 @@ void HistFitModule::Initialise()
 
 
     double sensitivity = BasicSensitivityEstimate(bdtScoreVec,
-        fSampleLabels,
-        sampleWeights,
+        fitSampleTypes,
+        fitSampleWeights,
         3.0); // signal bin threshold
 
     std::cout << "Estimated basic sensitivity (S/sqrt(B)) in logit BDT > 3.0 region: " << sensitivity << std::endl;
 
-    std::cout << "Debug 8" << std::endl;
-
-
-    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVecFakeScaling, fSampleLabels, "bdt_score_histograms_tmp_4.root");
+    std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(bdtScoreVecRateScaled, fitHistNames, fitSampleTypes, "bdt_score_histograms_tmp_4.root");
 
     std::cout << "HypoTestInverter starting..." << std::endl;
 
