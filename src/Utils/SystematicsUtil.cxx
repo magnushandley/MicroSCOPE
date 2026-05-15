@@ -166,63 +166,66 @@ namespace Analysis
         //}
         //Debug: calculate the mean universe and fractional difference from nominal
         //Also plot each universe overlaid with nominal for a few universes to visually check sanity
-        //TCanvas c("c", "c", 800, 600);
+        TCanvas c("c", "c", 800, 600);
         
         // Draw the first universe first to setup axes, but ensure title/labels are correct
         // Or better: Draw valid frame or nominal first. 
         // Let's modify logic to ensure axis labels apply.
         
-        //TH1D nomHistClone = nominalHist; // Make a clone to avoid modifying original
-        //nomHistClone.SetLineColor(kRed);
-        //nomHistClone.SetLineWidth(2);
-        //nomHistClone.SetFillStyle(0);
+        TH1D nomHistClone = nominalHist; // Make a clone to avoid modifying original
+        nomHistClone.SetLineColor(kRed);
+        nomHistClone.SetLineWidth(2);
+        nomHistClone.SetFillStyle(0);
         // Set title and axis labels here
-        //nomHistClone.SetTitle("Multisim Universes Comparison;Neutrino Energy (MeV);Events");
-        //nomHistClone.SetStats(0); // Optional: remove stats box for cleaner plot
+        nomHistClone.SetTitle("Multisim Universes Comparison;Logit BDT Score;Events");
+        nomHistClone.SetStats(0); // Optional: remove stats box for cleaner plot
+
+        //Debug, set y axis to log scale to better see differences in low-stat bins
+        c.SetLogy();
 
         // Calculate mean universe first so we can add it to legend
-        //TH1D meanUniverse("mean_universe", "Mean of Universes", nBins, xMin, xMax);
+        TH1D meanUniverse("mean_universe", "Mean of Universes", nBins, xMin, xMax);
         //meanUniverse.Sumw2();
-        //for (int u = 0; u < nUniverses; ++u)
-        //{
-        //    meanUniverse.Add(&universes[u]);
-        //}
-        //meanUniverse.Scale(1.0 / nUniverses);
+        for (int u = 0; u < nUniverses; ++u)
+        {
+            meanUniverse.Add(&universes[u]);
+        }
+        meanUniverse.Scale(1.0 / nUniverses);
         
         // Draw Nominal First to set the axes range and labels
-        //nomHistClone.Draw("HIST"); 
+        nomHistClone.Draw("HIST"); 
 
-        //for (int u = 0; u < nUniverses; ++u)
-        //{
-        //    universes[u].SetLineColor(kGray+1); // Lighter color for background lines often looks better
-        //    universes[u].SetLineWidth(1);
-        //    universes[u].SetFillStyle(0);
-        //    universes[u].Draw("HIST SAME");
-        //}
+        for (int u = 0; u < nUniverses; ++u)
+        {
+            universes[u].SetLineColor(kGray+1); // Lighter color for background lines often looks better
+            universes[u].SetLineWidth(1);
+            universes[u].SetFillStyle(0);
+            universes[u].Draw("HIST SAME");
+        }
         
         // Redraw Nominal on top
-        //nomHistClone.Draw("HIST SAME");
+        nomHistClone.Draw("HIST SAME");
 
         // ... existing code for printing values ...
         
         // Plot mean universe
-        //meanUniverse.SetLineColor(kBlue);
-        //meanUniverse.SetLineWidth(2);
-        //meanUniverse.SetFillStyle(0);
-        //meanUniverse.Draw("HIST SAME");
+        meanUniverse.SetLineColor(kBlue);
+        meanUniverse.SetLineWidth(2);
+        meanUniverse.SetFillStyle(0);
+        meanUniverse.Draw("HIST SAME");
 
         // Add Legend
-        //TLegend* leg = new TLegend(0.6, 0.7, 0.9, 0.9);
-        //leg->AddEntry(&nomHistClone, "Nominal CV", "l");
-        //leg->AddEntry(&meanUniverse, "Mean Universe", "l");
-        //if (nUniverses > 0) leg->AddEntry(&universes[0], "Multisim Universes", "l");
-        //leg->Draw();
+        TLegend* leg = new TLegend(0.6, 0.7, 0.9, 0.9);
+        leg->AddEntry(&nomHistClone, "Nominal CV", "l");
+        leg->AddEntry(&meanUniverse, "Mean Universe", "l");
+        if (nUniverses > 0) leg->AddEntry(&universes[0], "Multisim Universes", "l");
+        leg->Draw();
 
-        //c.Update();
-        //c.SaveAs("debug_universes_overlay.png");
+        c.Update();
+        c.SaveAs("debug_universes_overlay.png");
 
         // Clean up legend
-        //delete leg; 
+        delete leg; 
 
         return universes;
     }

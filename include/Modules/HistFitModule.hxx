@@ -8,8 +8,10 @@
 #include <ROOT/RDataFrame.hxx>
 #include <TChain.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
+#include <TMatrixD.h>
 
 #include <RooStats/HistFactory/MakeModelAndMeasurementsFast.h>
 #include <RooStats/HistFactory/Measurement.h>
@@ -35,6 +37,19 @@ public:
     std::string Name() const override { return "HistFit"; }
 
 private:
+    struct HistoSysVariation {
+        std::string systName;
+        std::string lowHistName;
+        std::string highHistName;
+    };
+    struct DynamicBDTBinning {
+        double xMin = 0.0;
+        double overflowEdge = 0.0;
+        double binWidth = 0.0;
+        double xMax = 0.0;
+        double overflowBackgroundYield = 0.0;
+        int binsBelowOverflow = 0;
+    };
 
     // Helper: build the dataframe vector from a file list
     std::vector<ROOT::RDF::RNode> BuildDataFrames(const std::vector<std::string>& files,
@@ -49,6 +64,14 @@ private:
                                             std::vector<TH1D>& histVec,
                                             const std::vector<std::string>& histNames,
                                             const std::vector<SampleType>& sampleTypes,
+                                            const std::vector<double>& sampleWeights,
+                                            const std::optional<TMatrixD>& overlayMultisimCovariance,
+                                            const std::string& inputFile) const;
+    std::vector<HistoSysVariation> WriteOverlayHistoSysVariations(
+                                            const TH1D& overlayHist,
+                                            const std::string& overlayHistName,
+                                            double sampleWeight,
+                                            const TMatrixD& covariance,
                                             const std::string& inputFile) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
@@ -58,6 +81,8 @@ private:
     double EffectiveSampleWeight(std::size_t sampleIndex) const;
     bool IsFitBackground(SampleType type) const;
     std::string SanitiseHistName(const std::string& label) const;
+    DynamicBDTBinning ComputeDynamicBDTBinning(
+        const std::vector<ROOT::RDF::RNode>& nodes) const;
     double BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
         const std::vector<SampleType>& sampleTypes,
         const std::vector<double>& sampleWeights,
@@ -75,10 +100,15 @@ private:
     double fSimulatedSignalU2; ///< The U^2 value used in the generator
     std::vector<double> fTestFractions; ///< Fractions of events to keep for each sample (for BDT test samples)
     double fRateScaling; ///< Optional global rate scaling for histogram contents
+    bool fPlotSystematicsDebug; ///< Whether to write covariance diagnostic plots
+    double fBDTScoreMinX; ///< Lower edge for dynamic BDT-score histograms
+    int fBDTScoreBinsBelowOverflow; ///< Number of BDT-score bins before the overflow-like bin
+    double fBDTScoreOverflowBackgroundEvents; ///< Target predicted background yield in overflow-like bin
 
 
     /// Working objects
     std::vector<ROOT::RDF::RNode> RNodes; ///< DataFrames for each input file
+    std::optional<TMatrixD> fOverlayMultisimCovariance; ///< Overlay multisim covariance for later HistoSys construction
 };
 
 } // namespace Analysis
