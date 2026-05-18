@@ -50,6 +50,19 @@ private:
         double overflowBackgroundYield = 0.0;
         int binsBelowOverflow = 0;
     };
+    struct ChannelInput {
+        std::string name;
+        std::vector<std::size_t> sampleIndices;
+    };
+    struct ChannelFitInputs {
+        std::string name;
+        std::vector<TH1D> hists;
+        std::vector<std::string> labels;
+        std::vector<std::string> histNames;
+        std::vector<SampleType> sampleTypes;
+        std::vector<double> sampleWeights;
+        std::optional<TMatrixD> overlayMultisimCovariance;
+    };
 
     // Helper: build the dataframe vector from a file list
     std::vector<ROOT::RDF::RNode> BuildDataFrames(const std::vector<std::string>& files,
@@ -61,17 +74,14 @@ private:
                     const std::string& fileName);
 
     std::unique_ptr<RooWorkspace> BuildModelWorkspace(
-                                            std::vector<TH1D>& histVec,
-                                            const std::vector<std::string>& histNames,
-                                            const std::vector<SampleType>& sampleTypes,
-                                            const std::vector<double>& sampleWeights,
-                                            const std::optional<TMatrixD>& overlayMultisimCovariance,
+                                            std::vector<ChannelFitInputs>& channels,
                                             const std::string& inputFile) const;
     std::vector<HistoSysVariation> WriteOverlayHistoSysVariations(
                                             const TH1D& overlayHist,
                                             const std::string& overlayHistName,
                                             double sampleWeight,
                                             const TMatrixD& covariance,
+                                            const std::string& systNamePrefix,
                                             const std::string& inputFile) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
@@ -81,8 +91,11 @@ private:
     double EffectiveSampleWeight(std::size_t sampleIndex) const;
     bool IsFitBackground(SampleType type) const;
     std::string SanitiseHistName(const std::string& label) const;
+    std::vector<ChannelInput> BuildChannelInputs() const;
+    void ValidateChannelInputs(const std::vector<ChannelInput>& channels) const;
     DynamicBDTBinning ComputeDynamicBDTBinning(
-        const std::vector<ROOT::RDF::RNode>& nodes) const;
+        const std::vector<ROOT::RDF::RNode>& nodes,
+        const std::vector<std::size_t>& sampleIndices) const;
     double BasicSensitivityEstimate(const std::vector<TH1D>& bdtScoreVec,
         const std::vector<SampleType>& sampleTypes,
         const std::vector<double>& sampleWeights,
@@ -94,6 +107,7 @@ private:
     bool fBlindData;     
     std::vector<std::string> fSampleLabels; ///< Labels for the samples, e.g. "data", "overlay", "signal"
     std::vector<SampleType> fSampleTypes; ///< Analysis role for each sample
+    std::vector<std::string> fSampleChannels; ///< HistFactory channel label for each sample
     std::vector<double> fSampleWeights; ///< Weights for each sample to normalise to POT
     double fDataPOT;    ///< POT for the data sample
     double fSignalPOT;  ///< POT for the signal MC sample
@@ -104,11 +118,11 @@ private:
     double fBDTScoreMinX; ///< Lower edge for dynamic BDT-score histograms
     int fBDTScoreBinsBelowOverflow; ///< Number of BDT-score bins before the overflow-like bin
     double fBDTScoreOverflowBackgroundEvents; ///< Target predicted background yield in overflow-like bin
+    bool fLegacySingleChannelMode; ///< True when SampleChannels is omitted and legacy names should be preserved
 
 
     /// Working objects
     std::vector<ROOT::RDF::RNode> RNodes; ///< DataFrames for each input file
-    std::optional<TMatrixD> fOverlayMultisimCovariance; ///< Overlay multisim covariance for later HistoSys construction
 };
 
 } // namespace Analysis
