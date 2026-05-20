@@ -5,15 +5,76 @@ import uproot
 import pandas as pd
 import numpy as np
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, classification_report
 
 import xgboost as xgb
 from pathlib import Path
 
 SCORE_COLUMN = "bdt_score"
+
+
+def source_files_in_order(df: pd.DataFrame) -> List[str]:
+    """Return source files in their first-seen row order."""
+    if "source_file" not in df.columns:
+        raise ValueError("DataFrame is missing required metadata column 'source_file'")
+    return df["source_file"].drop_duplicates().astype(str).tolist()
+
+
+def default_train_fractions(root_files: List[str], test_size: float) -> List[float]:
+    """Return the legacy uniform train fraction derived from --test-size."""
+    return [1.0 - test_size] * len(root_files)
+
+
+def validate_train_fractions(
+    fractions: List[float],
+    root_files: List[str],
+    arg_name: str,
+    file_arg_name: str,
+) -> None:
+    if len(fractions) != len(root_files):
+        raise ValueError(
+            f"{arg_name} must have the same length as {file_arg_name}: "
+            f"{len(fractions)} vs {len(root_files)}"
+        )
+
+    invalid = [
+        fraction
+        for fraction in fractions
+        if not 0.0 <= fraction < 1.0
+    ]
+    if invalid:
+        raise ValueError(f"{arg_name} values must be >= 0.0 and < 1.0")
+
+
+def normalize_data_files(
+    data_file: Optional[str],
+    data_files: Optional[List[str]],
+) -> List[str]:
+    """Merge legacy --data-file with plural --data-files, preserving order."""
+    normalized = []
+    seen = set()
+
+    for fname in data_files or []:
+        if fname not in seen:
+            normalized.append(fname)
+            seen.add(fname)
+
+    if data_file and data_file not in seen:
+        normalized.append(data_file)
+
+    return normalized
+
+
+def train_fraction_map(
+    root_files: List[str],
+    train_fractions: List[float],
+) -> Dict[str, float]:
+    return {
+        root_file: train_fraction
+        for root_file, train_fraction in zip(root_files, train_fractions)
+    }
 
 
 def load_root_files_to_df(
@@ -84,11 +145,13 @@ def prepare_train_test(
     df_sig: pd.DataFrame,
     feature_columns: List[str],
     weight_column: str = "sample_weight",
+    bkg_train_fractions: Optional[List[float]] = None,
+    sig_train_fractions: Optional[List[float]] = None,
     test_size: float = 0.5,
     random_state: int = 1337,
     balance_sig_to_bkg: bool = True,
 ):
-    """Prepare X/y/weights and split into train/test.
+    """Prepare X/y/weights and split into train/test per input file.
 
     Weighting strategy:
       - Background component imbalance is handled by the per-row weights already assigned
@@ -109,6 +172,26 @@ def prepare_train_test(
     if weight_column not in df_sig.columns:
         df_sig[weight_column] = 1.0
 
+    bkg_files = source_files_in_order(df_bkg)
+    sig_files = source_files_in_order(df_sig)
+    if bkg_train_fractions is None:
+        bkg_train_fractions = default_train_fractions(bkg_files, test_size)
+    if sig_train_fractions is None:
+        sig_train_fractions = default_train_fractions(sig_files, test_size)
+
+    validate_train_fractions(
+        bkg_train_fractions,
+        bkg_files,
+        "--bkg-train-fractions",
+        "--bkg-files",
+    )
+    validate_train_fractions(
+        sig_train_fractions,
+        sig_files,
+        "--sig-train-fractions",
+        "--sig-files",
+    )
+
     # Optional: scale signal weights to match total weighted background yield
     if balance_sig_to_bkg:
         sum_w_bkg = float(df_bkg[weight_column].sum())
@@ -123,26 +206,46 @@ def prepare_train_test(
     # Combine
     df = pd.concat([df_bkg, df_sig], ignore_index=True)
 
+    train_fractions = {}
+    train_fractions.update(train_fraction_map(bkg_files, bkg_train_fractions))
+    train_fractions.update(train_fraction_map(sig_files, sig_train_fractions))
+
+    train_indices = []
+    test_indices = []
+    ordered_files = bkg_files + sig_files
+    for file_index, source_file in enumerate(ordered_files):
+        file_indices = df.index[df["source_file"] == source_file].to_numpy()
+        fraction = train_fractions[source_file]
+        rng = np.random.default_rng(random_state + file_index)
+        shuffled_indices = rng.permutation(file_indices)
+        n_train = int(np.floor(fraction * len(shuffled_indices)))
+
+        train_indices.extend(shuffled_indices[:n_train].tolist())
+        test_indices.extend(shuffled_indices[n_train:].tolist())
+
     # Build arrays
     X = df[feature_columns]
     y = df["label"].astype(int)
     w = df[weight_column].astype(float)
 
-    # Split (stratify to preserve class fractions)
-    X_train, X_test, y_train, y_test, w_train, w_test = train_test_split(
-        X,
-        y,
-        w,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=y,
-    )
+    X_train = X.loc[train_indices]
+    X_test = X.loc[test_indices]
+    y_train = y.loc[train_indices]
+    y_test = y.loc[test_indices]
+    w_train = w.loc[train_indices]
+    w_test = w.loc[test_indices]
+
+    for label, class_name in [(0, "background"), (1, "signal")]:
+        if not (y_train == label).any():
+            raise ValueError(f"Training split contains no {class_name} rows")
+        if not (y_test == label).any():
+            raise ValueError(f"Held-out split contains no {class_name} rows")
 
     # Keep metadata to allow filtering back to original files
     meta_cols = ["source_file", "row_in_file", "label", weight_column]
     meta = df[meta_cols]
-    meta_train = meta.loc[X_train.index].copy()
-    meta_test = meta.loc[X_test.index].copy()
+    meta_train = meta.loc[train_indices].copy()
+    meta_test = meta.loc[test_indices].copy()
 
     return X_train, X_test, y_train, y_test, w_train, w_test, meta_train, meta_test
 
@@ -360,8 +463,30 @@ def write_trees_to_root(
                 tree_dir = tree_dir.mkdir(directory)
 
             tree_leaf_name = tree_path[-1]
-            writable_tree = tree_dir.mktree(tree_leaf_name, branch_arrays)
+            branch_types = {
+                branch_name: infer_mktree_branch_type(branch_array)
+                for branch_name, branch_array in branch_arrays.items()
+            }
+            writable_tree = tree_dir.mktree(tree_leaf_name, branch_types)
             writable_tree.extend(branch_arrays)
+
+
+def infer_mktree_branch_type(branch_array):
+    """Infer an uproot mktree branch type from an in-memory branch array."""
+    if isinstance(branch_array, np.ndarray):
+        if branch_array.ndim <= 1:
+            return branch_array.dtype
+        fixed_shape = " * ".join(str(dim) for dim in branch_array.shape[1:])
+        return f"{fixed_shape} * {branch_array.dtype.name}"
+
+    array_type = getattr(branch_array, "type", None)
+    content_type = getattr(array_type, "content", None)
+    if content_type is not None:
+        return str(content_type)
+    if array_type is not None:
+        return str(array_type)
+
+    return np.asarray(branch_array).dtype
 
 
 def score_single_root_file(
@@ -432,7 +557,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Optional MicroSCOPE config path passed through by PythonModule.")
     parser.add_argument("--bkg-files", nargs="+", required=True, help="Background ROOT input files.")
     parser.add_argument("--sig-files", nargs="+", required=True, help="Signal ROOT input files.")
-    parser.add_argument("--data-file", required=True, help="Data ROOT input file to score.")
+    parser.add_argument("--data-file", help="Legacy single data ROOT input file to score.")
+    parser.add_argument("--data-files", nargs="+", help="Data ROOT input files to score.")
+    parser.add_argument(
+        "--det-var-files",
+        "--detvar-files",
+        nargs="*",
+        default=[],
+        help="Detector-variation ROOT input files to score like data.",
+    )
     parser.add_argument(
         "--bkg-sample-weights",
         nargs="+",
@@ -461,6 +594,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=".", help="Directory for model and scored ROOT outputs.")
     parser.add_argument("--model-output", default="xgb_bdt.json", help="Model filename or path.")
     parser.add_argument("--test-size", type=float, default=0.5, help="Held-out test fraction.")
+    parser.add_argument(
+        "--bkg-train-fractions",
+        nargs="+",
+        type=float,
+        help="Per-background-file training fractions. Defaults to 1 - --test-size.",
+    )
+    parser.add_argument(
+        "--sig-train-fractions",
+        nargs="+",
+        type=float,
+        help="Per-signal-file training fractions. Defaults to 1 - --test-size.",
+    )
     parser.add_argument("--random-state", type=int, default=1337, help="Random seed.")
     parser.add_argument("--num-boost-round", type=int, default=5000, help="Maximum XGBoost boosting rounds.")
     parser.add_argument(
@@ -477,8 +622,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--bkg-files must contain at least one file")
     if not args.sig_files:
         raise ValueError("--sig-files must contain at least one file")
-    if not args.data_file:
-        raise ValueError("--data-file cannot be empty")
+    if not normalize_data_files(args.data_file, args.data_files):
+        raise ValueError("at least one of --data-file or --data-files must be provided")
     if not args.tree_name:
         raise ValueError("--tree-name cannot be empty")
     if not args.branches:
@@ -497,6 +642,20 @@ def validate_args(args: argparse.Namespace) -> None:
         )
     if not 0.0 < args.test_size < 1.0:
         raise ValueError("--test-size must be between 0 and 1")
+    if args.bkg_train_fractions is not None:
+        validate_train_fractions(
+            args.bkg_train_fractions,
+            args.bkg_files,
+            "--bkg-train-fractions",
+            "--bkg-files",
+        )
+    if args.sig_train_fractions is not None:
+        validate_train_fractions(
+            args.sig_train_fractions,
+            args.sig_files,
+            "--sig-train-fractions",
+            "--sig-files",
+        )
     if args.num_boost_round <= 0:
         raise ValueError("--num-boost-round must be positive")
     if args.early_stopping_rounds <= 0:
@@ -520,6 +679,18 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    data_files = normalize_data_files(args.data_file, args.data_files)
+    bkg_train_fractions = (
+        args.bkg_train_fractions
+        if args.bkg_train_fractions is not None
+        else default_train_fractions(args.bkg_files, args.test_size)
+    )
+    sig_train_fractions = (
+        args.sig_train_fractions
+        if args.sig_train_fractions is not None
+        else default_train_fractions(args.sig_files, args.test_size)
+    )
+
     print("[xgboost] Required output feature branches:")
     for branch in dedupe_preserve_order(args.branches):
         print(f"  {branch}")
@@ -529,6 +700,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  {branch}")
     print("[xgboost] Always-added output branch:")
     print(f"  {SCORE_COLUMN}")
+    print("[xgboost] Background train fractions:")
+    for fname, fraction in zip(args.bkg_files, bkg_train_fractions):
+        print(f"  {fname}: {fraction:.6g}")
+    print("[xgboost] Signal train fractions:")
+    for fname, fraction in zip(args.sig_files, sig_train_fractions):
+        print(f"  {fname}: {fraction:.6g}")
 
     df_bkg = load_root_files_to_df(
         args.bkg_files,
@@ -556,6 +733,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         df_sig,
         feature_columns=args.branches,
         weight_column="sample_weight",
+        bkg_train_fractions=bkg_train_fractions,
+        sig_train_fractions=sig_train_fractions,
         test_size=args.test_size,
         random_state=args.random_state,
         balance_sig_to_bkg=True,
@@ -616,17 +795,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         print(f"[xgboost] Wrote scored signal file: {scored_path}")
 
-    stem = Path(args.data_file).stem
-    scored_path = out_dir / f"{stem}_xgb_scored.root"
-    score_single_root_file(
-        model,
-        args.data_file,
-        str(scored_path),
-        args.tree_name,
-        args.branches,
-        keep_branches=args.keep_branches,
-    )
-    print(f"[xgboost] Wrote scored data file: {scored_path}")
+    for in_path in data_files:
+        stem = Path(in_path).stem
+        scored_path = out_dir / f"{stem}_xgb_scored.root"
+        score_single_root_file(
+            model,
+            in_path,
+            str(scored_path),
+            args.tree_name,
+            args.branches,
+            keep_branches=args.keep_branches,
+        )
+        print(f"[xgboost] Wrote scored data file: {scored_path}")
+
+    for in_path in args.det_var_files:
+        stem = Path(in_path).stem
+        scored_path = out_dir / f"{stem}_xgb_scored.root"
+        score_single_root_file(
+            model,
+            in_path,
+            str(scored_path),
+            args.tree_name,
+            args.branches,
+            keep_branches=args.keep_branches,
+        )
+        print(f"[xgboost] Wrote scored detector-variation file: {scored_path}")
 
     return 0
 
