@@ -267,10 +267,11 @@ void PreselectionModule::Initialise()
 
         //From this, there is a differenc of 0.5915 ns. For diagnostics, add another branch to the
         //RNode, adding this as a correction to the overlay sample only
-        if (IsOverlaySample(fSampleTypes[i])) {
+        if (IsOverlaySample(fSampleTypes[i]) || IsDetectorVariationInputSample(fSampleTypes[i])) {
             nodes[i] = nodes[i].Redefine("interaction_time_merged",
-                [](double t) {
-                    double corrected_time = t + 0.5915; // Apply the timing correction
+                [mu](double t) {
+                    //double corrected_time = t + 0.5915; // Apply the timing correction
+                    double corrected_time = t - mu; // Apply the timing correction from the fit, which is more accurate than the fixed value
                     double remerged_time = std::fmod(corrected_time, 18.831); // Wrap around using the spill period
                     if (remerged_time < 0) remerged_time += 18.831; // Ensure non-negative
                     return remerged_time;
