@@ -95,7 +95,7 @@ private:
                                             const std::string& channelName,
                                             const std::string& sourceName,
                                             const TMatrixD& covariance,
-                                            const TH1D& scaledNominalHist) const;
+                                            const TH1D& denominatorHist) const;
     TMatrixD FractionalCovarianceFromAbsolute(
                                             const TMatrixD& covariance,
                                             const TH1D& scaledNominalHist) const;

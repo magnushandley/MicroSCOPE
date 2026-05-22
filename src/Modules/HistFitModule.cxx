@@ -356,31 +356,33 @@ void HistFitModule::PrintSourceFractionalUncertainties(
     const std::string& channelName,
     const std::string& sourceName,
     const TMatrixD& covariance,
-    const TH1D& scaledNominalHist) const
+    const TH1D& denominatorHist) const
 {
-    const int nBins = scaledNominalHist.GetNbinsX();
+    const int nBins = denominatorHist.GetNbinsX();
     if (covariance.GetNrows() != nBins || covariance.GetNcols() != nBins) {
         throw std::runtime_error("[HistFitModule] " + sourceName
-                                 + " covariance dimensions do not match scaled nominal histogram bins for channel "
+                                 + " covariance dimensions do not match denominator histogram bins for channel "
                                  + channelName + ".");
     }
 
     std::cout << "[HistFitModule] Fractional uncertainty per bin for channel "
               << channelName << ", source " << sourceName
-              << " using scaled nominal histogram " << scaledNominalHist.GetName()
+              << " using denominator histogram " << denominatorHist.GetName()
               << ":\n";
 
     for (int bin = 1; bin <= nBins; ++bin) {
-        const double nominal = scaledNominalHist.GetBinContent(bin);
+        const double nominal = denominatorHist.GetBinContent(bin);
         const double variance = covariance(bin - 1, bin - 1);
         const double positiveVariance = variance > 0.0 ? variance : 0.0;
+        const double absUncert = std::sqrt(positiveVariance);
         const double fracUncert = nominal != 0.0
-            ? std::sqrt(positiveVariance) / std::abs(nominal)
+            ? absUncert / std::abs(nominal)
             : 0.0;
 
         std::cout << "  Bin " << bin
                   << ": nominal=" << nominal
                   << ", variance=" << variance
+                  << ", abs_uncert=" << absUncert
                   << ", frac_uncert=" << fracUncert;
         if (variance < 0.0) {
             std::cout << " (negative variance clipped for sqrt)";
@@ -1493,6 +1495,41 @@ void HistFitModule::Initialise()
                         fracCovPlotName);
                 }
             }
+        }
+
+        if (fitChannel.overlayShapeCovariance) {
+            TH1D fullBackgroundForCov;
+            bool hasBackgroundForCov = false;
+            for (std::size_t j = 0; j < fitChannel.hists.size(); ++j) {
+                if (!IsFitBackground(fitChannel.sampleTypes[j])) {
+                    continue;
+                }
+
+                TH1D scaledBackground = fitChannel.hists[j];
+                scaledBackground.SetDirectory(nullptr);
+                scaledBackground.Scale(fitChannel.sampleWeights[j] * fRateScaling);
+
+                if (!hasBackgroundForCov) {
+                    fullBackgroundForCov = scaledBackground;
+                    fullBackgroundForCov.Reset("ICES");
+                    const std::string histName = "full_background_for_cov_" + channelInput.name;
+                    fullBackgroundForCov.SetName(histName.c_str());
+                    fullBackgroundForCov.SetDirectory(nullptr);
+                    hasBackgroundForCov = true;
+                }
+                fullBackgroundForCov.Add(&scaledBackground);
+            }
+
+            if (!hasBackgroundForCov) {
+                throw std::runtime_error("[HistFitModule] Channel " + channelInput.name
+                                         + " has overlay covariance but no fit background histogram for fractional uncertainty denominator.");
+            }
+
+            PrintSourceFractionalUncertainties(
+                channelInput.name,
+                "total_overlay_shape_relative_to_full_background",
+                *fitChannel.overlayShapeCovariance,
+                fullBackgroundForCov);
         }
 
         double sensitivity = BasicSensitivityEstimate(
