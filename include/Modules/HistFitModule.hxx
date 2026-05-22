@@ -9,6 +9,7 @@
 #include <TChain.h>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <string>
 #include <vector>
 #include <TMatrixD.h>
@@ -95,6 +96,12 @@ private:
                                             const std::string& sourceName,
                                             const TMatrixD& covariance,
                                             const TH1D& scaledNominalHist) const;
+    TMatrixD FractionalCovarianceFromAbsolute(
+                                            const TMatrixD& covariance,
+                                            const TH1D& scaledNominalHist) const;
+    TMatrixD AbsoluteCovarianceFromFractional(
+                                            const TMatrixD& fractionalCovariance,
+                                            const TH1D& scaledNominalHist) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
@@ -105,6 +112,7 @@ private:
     std::string SanitiseHistName(const std::string& label) const;
     std::vector<ChannelInput> BuildChannelInputs() const;
     void ValidateChannelInputs(const std::vector<ChannelInput>& channels) const;
+    void ValidateDetVarCovarianceTransfers(const std::vector<ChannelInput>& channels) const;
     DynamicBDTBinning ComputeDynamicBDTBinning(
         const std::vector<ROOT::RDF::RNode>& nodes,
         const std::vector<std::size_t>& sampleIndices) const;
@@ -131,6 +139,8 @@ private:
     int fBDTScoreBinsBelowOverflow; ///< Number of BDT-score bins before the overflow-like bin
     double fBDTScoreOverflowBackgroundEvents; ///< Target predicted background yield in overflow-like bin
     bool fLegacySingleChannelMode; ///< True when SampleChannels is omitted and legacy names should be preserved
+    std::unordered_map<std::string, std::string> fDetVarCovarianceTransfers; ///< target channel -> source channel
+    std::string fDetVarCovarianceTransferMode; ///< Transfer mode for temporary detector covariance reuse
 
 
     /// Working objects

@@ -15,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <ROOT/RDataFrame.hxx>
 #include <ROOT/RDFHelpers.hxx>
@@ -121,6 +122,36 @@ std::vector<std::string> ParseTokenList(const std::string& valuesString,
     return values;
 }
 
+std::vector<std::pair<std::string, std::string>>
+ParseDetVarCovarianceTransfers(const std::string& transfersString,
+                               const std::string& key)
+{
+    std::vector<std::pair<std::string, std::string>> transfers;
+    if (TrimCopy(transfersString).empty()) {
+        return transfers;
+    }
+
+    const std::vector<std::string> transferTokens = ParseTokenList(transfersString, key);
+    transfers.reserve(transferTokens.size());
+    for (const std::string& token : transferTokens) {
+        const std::size_t sep = token.find(':');
+        if (sep == std::string::npos || token.find(':', sep + 1) != std::string::npos) {
+            throw std::runtime_error("[HistFitModule] Invalid " + key + " entry \""
+                                     + token + "\". Expected target_channel:source_channel.");
+        }
+
+        const std::string target = TrimCopy(token.substr(0, sep));
+        const std::string source = TrimCopy(token.substr(sep + 1));
+        if (target.empty() || source.empty()) {
+            throw std::runtime_error("[HistFitModule] Invalid " + key + " entry \""
+                                     + token + "\". Target and source channels must be non-empty.");
+        }
+        transfers.push_back({target, source});
+    }
+
+    return transfers;
+}
+
 } // namespace
 
 HistFitModule::HistFitModule(const TEnv& cfg)
@@ -136,6 +167,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fBDTScoreBinsBelowOverflow(cfg.GetValue("HistFitModule.BDTScoreBinsBelowOverflow", 9))
     , fBDTScoreOverflowBackgroundEvents(cfg.GetValue("HistFitModule.BDTScoreOverflowBackgroundEvents", 5.0))
     , fLegacySingleChannelMode(!ConfigHasKey(cfg, "HistFitModule.SampleChannels"))
+    , fDetVarCovarianceTransferMode(ToLowerCopy(cfg.GetValue("HistFitModule.DetVarCovarianceTransferMode", "fractional")))
 {
 
     std::stringstream ssInput{cfg.GetValue("HistFitModule.InputFiles", "")};
@@ -167,6 +199,20 @@ HistFitModule::HistFitModule(const TEnv& cfg)
         fSampleChannels = ParseTokenList(
             cfg.GetValue("HistFitModule.SampleChannels", ""),
             "HistFitModule.SampleChannels");
+    }
+
+    if (ConfigHasKey(cfg, "HistFitModule.DetVarCovarianceTransfers")) {
+        const auto transfers = ParseDetVarCovarianceTransfers(
+            cfg.GetValue("HistFitModule.DetVarCovarianceTransfers", ""),
+            "HistFitModule.DetVarCovarianceTransfers");
+        for (const auto& [target, source] : transfers) {
+            const std::string safeTarget = SanitiseHistName(target);
+            const std::string safeSource = SanitiseHistName(source);
+            if (!fDetVarCovarianceTransfers.emplace(safeTarget, safeSource).second) {
+                throw std::runtime_error("[HistFitModule] Duplicate detector covariance transfer target channel: "
+                                         + safeTarget);
+            }
+        }
     }
 
     const std::size_t nSamples = fInputFiles.size();
@@ -207,6 +253,11 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     if (!std::isfinite(fBDTScoreOverflowBackgroundEvents) || fBDTScoreOverflowBackgroundEvents <= 0.0) {
         throw std::runtime_error("[HistFitModule] BDTScoreOverflowBackgroundEvents must be finite and positive.");
     }
+    if (!fDetVarCovarianceTransfers.empty() && fDetVarCovarianceTransferMode != "fractional") {
+        throw std::runtime_error("[HistFitModule] DetVarCovarianceTransferMode \""
+                                 + fDetVarCovarianceTransferMode
+                                 + "\" is not supported. Allowed: fractional.");
+    }
 
     for (std::size_t i = 0; i < fTestFractions.size(); ++i) {
         const double testFraction = fTestFractions[i];
@@ -220,7 +271,9 @@ HistFitModule::HistFitModule(const TEnv& cfg)
         }
     }
 
-    ValidateChannelInputs(BuildChannelInputs());
+    const std::vector<ChannelInput> configuredChannels = BuildChannelInputs();
+    ValidateChannelInputs(configuredChannels);
+    ValidateDetVarCovarianceTransfers(configuredChannels);
 }
 
 
@@ -334,6 +387,59 @@ void HistFitModule::PrintSourceFractionalUncertainties(
         }
         std::cout << "\n";
     }
+}
+
+TMatrixD HistFitModule::FractionalCovarianceFromAbsolute(
+    const TMatrixD& covariance,
+    const TH1D& scaledNominalHist) const
+{
+    const int nBins = scaledNominalHist.GetNbinsX();
+    if (covariance.GetNrows() != nBins || covariance.GetNcols() != nBins) {
+        throw std::runtime_error("[HistFitModule] Cannot convert covariance to fractional form: dimensions do not match nominal histogram.");
+    }
+
+    TMatrixD fractionalCovariance(nBins, nBins);
+    fractionalCovariance.Zero();
+
+    for (int i = 0; i < nBins; ++i) {
+        const double nomI = scaledNominalHist.GetBinContent(i + 1);
+        for (int j = 0; j < nBins; ++j) {
+            const double nomJ = scaledNominalHist.GetBinContent(j + 1);
+            const double denom = nomI * nomJ;
+            fractionalCovariance(i, j) = denom != 0.0 ? covariance(i, j) / denom : 0.0;
+        }
+    }
+
+    return fractionalCovariance;
+}
+
+TMatrixD HistFitModule::AbsoluteCovarianceFromFractional(
+    const TMatrixD& fractionalCovariance,
+    const TH1D& scaledNominalHist) const
+{
+    const int nBins = scaledNominalHist.GetNbinsX();
+    TMatrixD covariance(nBins, nBins);
+    covariance.Zero();
+
+    const int nRows = fractionalCovariance.GetNrows();
+    const int nCols = fractionalCovariance.GetNcols();
+    const int nRowsToCopy = std::min(nRows, nBins);
+    const int nColsToCopy = std::min(nCols, nBins);
+    if (nRows != nBins || nCols != nBins) {
+        std::cout << "[HistFitModule] WARNING: fractional detector covariance dimensions ("
+                  << nRows << "x" << nCols << ") do not match target nominal histogram bins ("
+                  << nBins << "). Copying the common bin range and leaving unmatched target bins with zero transferred covariance.\n";
+    }
+
+    for (int i = 0; i < nRowsToCopy; ++i) {
+        const double nomI = scaledNominalHist.GetBinContent(i + 1);
+        for (int j = 0; j < nColsToCopy; ++j) {
+            const double nomJ = scaledNominalHist.GetBinContent(j + 1);
+            covariance(i, j) = fractionalCovariance(i, j) * nomI * nomJ;
+        }
+    }
+
+    return covariance;
 }
 
 std::vector<HistFitModule::HistoSysVariation>
@@ -873,6 +979,39 @@ void HistFitModule::ValidateChannelInputs(const std::vector<ChannelInput>& chann
     }
 }
 
+void HistFitModule::ValidateDetVarCovarianceTransfers(const std::vector<ChannelInput>& channels) const
+{
+    if (fDetVarCovarianceTransfers.empty()) {
+        return;
+    }
+
+    std::unordered_set<std::string> channelNames;
+    for (const ChannelInput& channel : channels) {
+        channelNames.insert(channel.name);
+    }
+
+    for (const auto& [target, source] : fDetVarCovarianceTransfers) {
+        if (!channelNames.count(target)) {
+            throw std::runtime_error("[HistFitModule] Detector covariance transfer target channel does not exist: "
+                                     + target);
+        }
+        if (!channelNames.count(source)) {
+            throw std::runtime_error("[HistFitModule] Detector covariance transfer source channel does not exist: "
+                                     + source);
+        }
+        if (target == source) {
+            throw std::runtime_error("[HistFitModule] Detector covariance transfer target and source are identical: "
+                                     + target);
+        }
+    }
+
+    std::cout << "[HistFitModule] Temporary detector covariance transfers enabled in "
+              << fDetVarCovarianceTransferMode << " mode:\n";
+    for (const auto& [target, source] : fDetVarCovarianceTransfers) {
+        std::cout << "  target " << target << " <- source " << source << "\n";
+    }
+}
+
 HistFitModule::DynamicBDTBinning
 HistFitModule::ComputeDynamicBDTBinning(
     const std::vector<ROOT::RDF::RNode>& nodes,
@@ -1051,6 +1190,19 @@ void HistFitModule::Initialise()
     std::vector<TH1D> allFitHistsRateScaled;
     std::vector<std::string> allFitHistNames;
     std::vector<double> allFitSampleWeights;
+    std::unordered_map<std::string, TMatrixD> detVarFractionalCovarianceByChannel;
+    std::unordered_map<std::string, DynamicBDTBinning> detVarBinningByChannel;
+    const auto binningMatches = [](const DynamicBDTBinning& lhs, const DynamicBDTBinning& rhs) {
+        const auto close = [](double a, double b) {
+            return std::abs(a - b) <= 1e-9 * std::max({1.0, std::abs(a), std::abs(b)});
+        };
+
+        return lhs.binsBelowOverflow == rhs.binsBelowOverflow
+            && close(lhs.xMin, rhs.xMin)
+            && close(lhs.overflowEdge, rhs.overflowEdge)
+            && close(lhs.binWidth, rhs.binWidth)
+            && close(lhs.xMax, rhs.xMax);
+    };
 
     for (const ChannelInput& channelInput : channelInputs) {
         std::vector<std::size_t> fitSampleIndices;
@@ -1219,6 +1371,22 @@ void HistFitModule::Initialise()
                         detVarCov,
                         detVarCVNominalScaled);
 
+                    TMatrixD detVarFractionalCov =
+                        FractionalCovarianceFromAbsolute(detVarCov, detVarCVNominalScaled);
+                    detVarFractionalCovarianceByChannel.erase(channelInput.name);
+                    const auto [cachedCovIt, cachedCovInserted] =
+                        detVarFractionalCovarianceByChannel.emplace(channelInput.name, detVarFractionalCov);
+                    if (!cachedCovInserted) {
+                        throw std::runtime_error("[HistFitModule] Failed to cache detector covariance for channel "
+                                                 + channelInput.name + ".");
+                    }
+                    detVarBinningByChannel[channelInput.name] = bdtBinning;
+                    std::cout << "[HistFitModule] Cached fractional detector variation covariance for channel "
+                              << channelInput.name << " with dimensions "
+                              << cachedCovIt->second.GetNrows() << "x"
+                              << cachedCovIt->second.GetNcols()
+                              << ".\n";
+
                     overlayShapeCov = overlayShapeCov + detVarCov;
                     fitChannel.overlayShapeCovarianceIncludesDetVars = true;
 
@@ -1239,6 +1407,61 @@ void HistFitModule::Initialise()
                             detVarCov,
                             detVarCVNominalScaled,
                             detVarFracCovPlotName);
+                    }
+                }
+
+                const auto transferIt = fDetVarCovarianceTransfers.find(channelInput.name);
+                if (transferIt != fDetVarCovarianceTransfers.end()) {
+                    if (detVarCVIndex && !detVarIndices.empty()) {
+                        std::cout << "[HistFitModule] Channel " << channelInput.name
+                                  << " has real detector variation inputs; skipping configured detector covariance transfer from "
+                                  << transferIt->second << ".\n";
+                    } else {
+                        const std::string& sourceChannel = transferIt->second;
+                        const auto sourceCovIt = detVarFractionalCovarianceByChannel.find(sourceChannel);
+                        if (sourceCovIt == detVarFractionalCovarianceByChannel.end()) {
+                            throw std::runtime_error("[HistFitModule] Detector covariance transfer for target channel "
+                                                     + channelInput.name + " requires source channel "
+                                                     + sourceChannel
+                                                     + " to have already cached real detector covariance.");
+                        }
+                        const auto sourceBinningIt = detVarBinningByChannel.find(sourceChannel);
+                        if (sourceBinningIt != detVarBinningByChannel.end()
+                            && !binningMatches(sourceBinningIt->second, bdtBinning)) {
+                            std::cout << "[HistFitModule] WARNING: detector covariance transfer "
+                                      << channelInput.name << " <- " << sourceChannel
+                                      << " uses channels with different dynamic BDT bin edges. "
+                                      << "Proceeding because this transfer is an explicit temporary approximation.\n";
+                        }
+
+                        TMatrixD transferredDetVarCov =
+                            AbsoluteCovarianceFromFractional(sourceCovIt->second, overlayNominalForCov);
+
+                        std::cout << "[HistFitModule] WARNING: applying temporary transferred detector variation covariance "
+                                  << channelInput.name << " <- " << sourceChannel
+                                  << " using fractional covariance and target scaled overlay nominal.\n";
+                        PrintSourceFractionalUncertainties(
+                            channelInput.name,
+                            "transferred_detector_from_" + sourceChannel,
+                            transferredDetVarCov,
+                            overlayNominalForCov);
+
+                        overlayShapeCov = overlayShapeCov + transferredDetVarCov;
+                        fitChannel.overlayShapeCovarianceIncludesDetVars = true;
+
+                        if (fPlotSystematicsDebug) {
+                            const std::string detVarCovPlotName = fLegacySingleChannelMode
+                                ? "histfit_overlay_detvar_cov_transferred"
+                                : "histfit_overlay_detvar_cov_transferred_" + channelInput.name;
+                            const std::string detVarFracCovPlotName = fLegacySingleChannelMode
+                                ? "histfit_overlay_detvar_frac_cov_transferred"
+                                : "histfit_overlay_detvar_frac_cov_transferred_" + channelInput.name;
+                            sysUtil.PlotMatrix(transferredDetVarCov, detVarCovPlotName);
+                            sysUtil.PlotFractionalCovarianceMatrix(
+                                transferredDetVarCov,
+                                overlayNominalForCov,
+                                detVarFracCovPlotName);
+                        }
                     }
                 }
 
