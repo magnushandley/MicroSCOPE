@@ -299,6 +299,43 @@ void HistFitModule::SaveHistograms(const std::vector<TH1D>& hists,
     outFile.Close();
 }
 
+void HistFitModule::PrintSourceFractionalUncertainties(
+    const std::string& channelName,
+    const std::string& sourceName,
+    const TMatrixD& covariance,
+    const TH1D& scaledNominalHist) const
+{
+    const int nBins = scaledNominalHist.GetNbinsX();
+    if (covariance.GetNrows() != nBins || covariance.GetNcols() != nBins) {
+        throw std::runtime_error("[HistFitModule] " + sourceName
+                                 + " covariance dimensions do not match scaled nominal histogram bins for channel "
+                                 + channelName + ".");
+    }
+
+    std::cout << "[HistFitModule] Fractional uncertainty per bin for channel "
+              << channelName << ", source " << sourceName
+              << " using scaled nominal histogram " << scaledNominalHist.GetName()
+              << ":\n";
+
+    for (int bin = 1; bin <= nBins; ++bin) {
+        const double nominal = scaledNominalHist.GetBinContent(bin);
+        const double variance = covariance(bin - 1, bin - 1);
+        const double positiveVariance = variance > 0.0 ? variance : 0.0;
+        const double fracUncert = nominal != 0.0
+            ? std::sqrt(positiveVariance) / std::abs(nominal)
+            : 0.0;
+
+        std::cout << "  Bin " << bin
+                  << ": nominal=" << nominal
+                  << ", variance=" << variance
+                  << ", frac_uncert=" << fracUncert;
+        if (variance < 0.0) {
+            std::cout << " (negative variance clipped for sqrt)";
+        }
+        std::cout << "\n";
+    }
+}
+
 std::vector<HistFitModule::HistoSysVariation>
 HistFitModule::WriteOverlayHistoSysVariations(
     const TH1D& overlayHist,
@@ -411,6 +448,42 @@ HistFitModule::WriteOverlayHistoSysVariations(
     return variations;
 }
 
+std::string HistFitModule::WriteOverlayShapeSysUncertainty(
+    const TH1D& overlayHist,
+    const std::string& overlayHistName,
+    double sampleWeight,
+    double relativeUncertainty,
+    const std::string& inputFile) const
+{
+    if (relativeUncertainty < 0.0) {
+        throw std::runtime_error("[HistFitModule] ShapeSys relative uncertainty must be non-negative.");
+    }
+
+    TH1D uncertaintyHist = overlayHist;
+    const std::string uncertaintyHistName = overlayHistName + "_shapesys_30pct_uncert";
+    uncertaintyHist.SetName(uncertaintyHistName.c_str());
+    uncertaintyHist.SetDirectory(nullptr);
+    uncertaintyHist.Scale(sampleWeight);
+
+    for (int bin = 1; bin <= uncertaintyHist.GetNbinsX(); ++bin) {
+        const double nominalBin = uncertaintyHist.GetBinContent(bin);
+        uncertaintyHist.SetBinContent(bin, relativeUncertainty * std::abs(nominalBin));
+        uncertaintyHist.SetBinError(bin, 0.0);
+    }
+
+    TFile outFile(inputFile.c_str(), "UPDATE");
+    if (outFile.IsZombie()) {
+        throw std::runtime_error("[HistFitModule] Cannot update histogram file with ShapeSys uncertainty: "
+                                 + inputFile);
+    }
+
+    outFile.cd();
+    uncertaintyHist.Write("", TObject::kOverwrite);
+    outFile.Close();
+
+    return uncertaintyHistName;
+}
+
 std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
     std::vector<ChannelFitInputs>& channels,
     const std::string& inputFile) const
@@ -478,14 +551,14 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                   << " data sample set: " << channelInputs.histNames[dataIndex] << std::endl;
         chan.SetStatErrorConfig(0.02, "Poisson"); // Investigate impact of this
 
-        if (channelInputs.overlayMultisimCovariance) {
+        if (channelInputs.overlayShapeCovariance) {
             const auto nOverlaySamples = std::count_if(
                 channelInputs.sampleTypes.begin(),
                 channelInputs.sampleTypes.end(),
                 [](SampleType type) { return IsOverlaySample(type); });
             if (nOverlaySamples != 1) {
                 throw std::runtime_error("[HistFitModule] Channel " + channelInputs.name
-                                         + ": overlay covariance HistoSys construction requires exactly one overlay sample.");
+                                         + ": overlay shape covariance HistoSys construction requires exactly one overlay sample.");
             }
         }
 
@@ -505,7 +578,7 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                 channelInputs.histNames[i],
                 inputFile);
             if (IsSignalSample(sampleType)) {
-                sample.AddNormFactor("SigXsecOverSim", 0.001, 0, 0.005);
+                sample.AddNormFactor("SigXsecOverSim", 0.0005, 0, 0.001);
                 sample.ActivateStatError();
                 sample.AddOverallSys("signal_norm_30pct", 0.7, 1.3);
                 std::cout << "[HistFitModule] Channel " << channelInputs.name
@@ -515,15 +588,18 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                 std::cout << "[HistFitModule] Channel " << channelInputs.name
                           << " added background sample: " << channelInputs.histNames[i]
                           << " (" << SampleTypeName(sampleType) << ")" << std::endl;
-                if (IsOverlaySample(sampleType) && channelInputs.overlayMultisimCovariance) {
+                if (IsOverlaySample(sampleType) && channelInputs.overlayShapeCovariance) {
+                    const std::string systNameBase = channelInputs.overlayShapeCovarianceIncludesDetVars
+                        ? "overlay_shape"
+                        : "overlay_multisim";
                     const std::string systNamePrefix = fLegacySingleChannelMode
-                        ? "overlay_multisim_eig"
-                        : "overlay_multisim_" + channelInputs.name + "_eig";
+                        ? systNameBase + "_eig"
+                        : systNameBase + "_" + channelInputs.name + "_eig";
                     const auto variations = WriteOverlayHistoSysVariations(
                         channelInputs.hists[i],
                         channelInputs.histNames[i],
                         channelInputs.sampleWeights[i],
-                        *channelInputs.overlayMultisimCovariance,
+                        *channelInputs.overlayShapeCovariance,
                         systNamePrefix,
                         inputFile);
                     for (const auto& variation : variations) {
@@ -537,8 +613,31 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                             "");
                     }
                     std::cout << "[HistFitModule] Attached " << variations.size()
-                              << " overlay multisim HistoSys variations to "
+                              << " overlay shape HistoSys variations to "
                               << channelInputs.histNames[i] << ".\n";
+
+                    //const std::string shapeSystName = fLegacySingleChannelMode
+                    //    ? "overlay_multisim_shapesys_30pct"
+                    //    : "overlay_multisim_" + channelInputs.name + "_shapesys_30pct";
+                    //const std::string shapeSystHistName = WriteOverlayShapeSysUncertainty(
+                    //    channelInputs.hists[i],
+                    //    channelInputs.histNames[i],
+                    //    channelInputs.sampleWeights[i],
+                    //    0.30,
+                    //    inputFile);
+                    //sample.AddShapeSys(
+                    //    shapeSystName,
+                    //    RooStats::HistFactory::Constraint::Poisson,
+                    //    shapeSystHistName,
+                    //    inputFile,
+                    //    "");
+                    //std::cout << "[HistFitModule] Attached 30% overlay ShapeSys uncertainty "
+                    //          << shapeSystName << " using " << shapeSystHistName << ".\n";
+
+                    // std::string normSystName = fLegacySingleChannelMode
+                    //     ? "overlay_multisim_norm_30pct"
+                    //     : "overlay_multisim_" + channelInputs.name + "_norm_30pct";
+                    // sample.AddOverallSys(normSystName, 0.7, 1.3);
                 }
             } else {
                 throw std::runtime_error("[HistFitModule] Unsupported sample type in HistFactory model: "
@@ -733,6 +832,7 @@ void HistFitModule::ValidateChannelInputs(const std::vector<ChannelInput>& chann
         int nDataSamples = 0;
         int nSignalSamples = 0;
         int nFitBackgroundSamples = 0;
+        int nOverlaySamples = 0;
         int nDetVarCVSamples = 0;
         int nDetVarSamples = 0;
 
@@ -741,6 +841,7 @@ void HistFitModule::ValidateChannelInputs(const std::vector<ChannelInput>& chann
             if (IsDataSample(type)) ++nDataSamples;
             if (IsSignalSample(type)) ++nSignalSamples;
             if (IsFitBackground(type)) ++nFitBackgroundSamples;
+            if (IsOverlaySample(type)) ++nOverlaySamples;
             if (IsDetectorVariationCVSample(type)) ++nDetVarCVSamples;
             if (IsDetectorVariationSample(type)) ++nDetVarSamples;
         }
@@ -765,6 +866,9 @@ void HistFitModule::ValidateChannelInputs(const std::vector<ChannelInput>& chann
             std::cout << "[HistFitModule] Warning: channel " << channel.name
                       << " has a detvarcv sample without detvar samples; "
                       << "detector variation systematics will be skipped in this stage.\n";
+        }
+        if (nDetVarCVSamples == 1 && nDetVarSamples > 0 && nOverlaySamples != 1) {
+            throw std::runtime_error(channelPrefix + "detector variation covariance requires exactly one overlay sample.");
         }
     }
 }
@@ -934,10 +1038,6 @@ void HistFitModule::Initialise()
     // We apply the logit transformation to spread out high bdt scores
 
     for (std::size_t i = 0; i < RNodes.size(); ++i) {
-        if (IsDetectorVariationInputSample(fSampleTypes[i])) {
-            continue;
-        }
-
         RNodes[i] = RNodes[i].Define("logit_bdt",
             [](float score) -> double {
                 //float s = (score + 1.0f) / 2.0f; //rescale from [-1,1] to [0,1]
@@ -954,11 +1054,19 @@ void HistFitModule::Initialise()
 
     for (const ChannelInput& channelInput : channelInputs) {
         std::vector<std::size_t> fitSampleIndices;
+        std::optional<std::size_t> detVarCVIndex;
+        std::vector<std::size_t> detVarIndices;
+
         for (const std::size_t sampleIndex : channelInput.sampleIndices) {
             if (IsDetectorVariationInputSample(fSampleTypes[sampleIndex])) {
                 std::cout << "[HistFitModule] Skipping detector variation input in nominal fit for channel "
                           << channelInput.name << ": " << fSampleLabels[sampleIndex]
                           << " (" << SampleTypeName(fSampleTypes[sampleIndex]) << ")\n";
+                if (IsDetectorVariationCVSample(fSampleTypes[sampleIndex])) {
+                    detVarCVIndex = sampleIndex;
+                } else if (IsDetectorVariationSample(fSampleTypes[sampleIndex])) {
+                    detVarIndices.push_back(sampleIndex);
+                }
                 continue;
             }
             fitSampleIndices.push_back(sampleIndex);
@@ -981,16 +1089,18 @@ void HistFitModule::Initialise()
         ChannelFitInputs fitChannel;
         fitChannel.name = channelInput.name;
 
-        for (const std::size_t i : fitSampleIndices) {
-            const double overflowEdge = bdtBinning.overflowEdge;
-            const double overflowBinCenter = bdtBinning.overflowEdge + 0.5 * bdtBinning.binWidth;
-            RNodes[i] = RNodes[i].Define(
+        const double overflowEdge = bdtBinning.overflowEdge;
+        const double overflowBinCenter = bdtBinning.overflowEdge + 0.5 * bdtBinning.binWidth;
+        for (const std::size_t sampleIndex : channelInput.sampleIndices) {
+            RNodes[sampleIndex] = RNodes[sampleIndex].Define(
                 "logit_bdt_hist",
                 [overflowEdge, overflowBinCenter](double score) {
                     return score >= overflowEdge ? overflowBinCenter : score;
                 },
                 {"logit_bdt"});
+        }
 
+        for (const std::size_t i : fitSampleIndices) {
             const std::string weightCol = DefaultPlotWeightColumn(fSampleTypes[i]);
 
             fitChannel.hists.push_back(
@@ -1048,24 +1158,114 @@ void HistFitModule::Initialise()
                 TMatrixD ppfxCov = sysUtil.covarianceMatrixFromMultisims(ppfxUniverses, overlayNominalForCov);
                 TMatrixD reintCov = sysUtil.covarianceMatrixFromMultisims(reintUniverses, overlayNominalForCov);
 
-                fitChannel.overlayMultisimCovariance = genieCov + ppfxCov + reintCov;
+                PrintSourceFractionalUncertainties(channelInput.name, "genie", genieCov, overlayNominalForCov);
+                PrintSourceFractionalUncertainties(channelInput.name, "ppfx", ppfxCov, overlayNominalForCov);
+                PrintSourceFractionalUncertainties(channelInput.name, "reinteraction", reintCov, overlayNominalForCov);
+
+                TMatrixD overlayShapeCov = genieCov + ppfxCov + reintCov;
 
                 std::cout << "[HistFitModule] Built overlay multisim covariance for channel "
                           << channelInput.name << ", sample " << fSampleLabels[i]
                           << " with dimensions "
-                          << fitChannel.overlayMultisimCovariance->GetNrows() << "x"
-                          << fitChannel.overlayMultisimCovariance->GetNcols() << ".\n";
+                          << overlayShapeCov.GetNrows() << "x"
+                          << overlayShapeCov.GetNcols() << ".\n";
+
+                if (detVarCVIndex && !detVarIndices.empty()) {
+                    const std::string detVarWeightCol = DefaultPlotWeightColumn(fSampleTypes[*detVarCVIndex]);
+                    TH1D detVarCVNominalForCov = Plotter::CreateTH1DFromRNode(
+                        RNodes[*detVarCVIndex],
+                        ("logit_bdt_score_" + histNames[*detVarCVIndex] + "_detvarcv").c_str(),
+                        "logit_bdt_hist",
+                        "Logit BDT Score",
+                        "Count",
+                        bdtBinning.binsBelowOverflow + 1,
+                        bdtBinning.xMin,
+                        bdtBinning.xMax,
+                        false,
+                        false,
+                        detVarWeightCol);
+                    detVarCVNominalForCov.SetDirectory(nullptr);
+
+                    std::vector<ROOT::RDF::RNode> detVarNodes;
+                    std::vector<std::string> detVarNames;
+                    std::vector<double> detVarGlobalScales;
+                    detVarNodes.reserve(detVarIndices.size());
+                    detVarNames.reserve(detVarIndices.size());
+                    detVarGlobalScales.reserve(detVarIndices.size());
+
+                    for (const std::size_t detVarIndex : detVarIndices) {
+                        detVarNodes.push_back(RNodes[detVarIndex]);
+                        detVarNames.push_back(fSampleLabels[detVarIndex]);
+                        detVarGlobalScales.push_back(EffectiveSampleWeight(detVarIndex) * fRateScaling);
+                    }
+
+                    const double detVarCVScale = EffectiveSampleWeight(*detVarCVIndex) * fRateScaling;
+                    TMatrixD detVarCov = sysUtil.BuildDetVarCovariance(
+                        detVarCVNominalForCov,
+                        RNodes[*detVarCVIndex],
+                        detVarNodes,
+                        detVarNames,
+                        "logit_bdt_hist",
+                        detVarGlobalScales,
+                        detVarCVScale,
+                        detVarWeightCol);
+
+                    TH1D detVarCVNominalScaled = detVarCVNominalForCov;
+                    detVarCVNominalScaled.SetDirectory(nullptr);
+                    detVarCVNominalScaled.Scale(detVarCVScale);
+                    PrintSourceFractionalUncertainties(
+                        channelInput.name,
+                        "detector",
+                        detVarCov,
+                        detVarCVNominalScaled);
+
+                    overlayShapeCov = overlayShapeCov + detVarCov;
+                    fitChannel.overlayShapeCovarianceIncludesDetVars = true;
+
+                    std::cout << "[HistFitModule] Added detector variation covariance for channel "
+                              << channelInput.name << " with dimensions "
+                              << detVarCov.GetNrows() << "x" << detVarCov.GetNcols()
+                              << ".\n";
+
+                    if (fPlotSystematicsDebug) {
+                        const std::string detVarCovPlotName = fLegacySingleChannelMode
+                            ? "histfit_overlay_detvar_cov"
+                            : "histfit_overlay_detvar_cov_" + channelInput.name;
+                        const std::string detVarFracCovPlotName = fLegacySingleChannelMode
+                            ? "histfit_overlay_detvar_frac_cov"
+                            : "histfit_overlay_detvar_frac_cov_" + channelInput.name;
+                        sysUtil.PlotMatrix(detVarCov, detVarCovPlotName);
+                        sysUtil.PlotFractionalCovarianceMatrix(
+                            detVarCov,
+                            detVarCVNominalScaled,
+                            detVarFracCovPlotName);
+                    }
+                }
+
+                fitChannel.overlayShapeCovariance = overlayShapeCov;
+
+                std::cout << "[HistFitModule] Built overlay shape covariance for channel "
+                          << channelInput.name << ", sample " << fSampleLabels[i]
+                          << " with dimensions "
+                          << fitChannel.overlayShapeCovariance->GetNrows() << "x"
+                          << fitChannel.overlayShapeCovariance->GetNcols() << ".\n";
 
                 if (fPlotSystematicsDebug) {
+                    const std::string covPlotBase = fitChannel.overlayShapeCovarianceIncludesDetVars
+                        ? "histfit_overlay_shape_cov"
+                        : "histfit_overlay_multisim_cov";
+                    const std::string fracCovPlotBase = fitChannel.overlayShapeCovarianceIncludesDetVars
+                        ? "histfit_overlay_shape_frac_cov"
+                        : "histfit_overlay_multisim_frac_cov";
                     const std::string covPlotName = fLegacySingleChannelMode
-                        ? "histfit_overlay_multisim_cov"
-                        : "histfit_overlay_multisim_cov_" + channelInput.name;
+                        ? covPlotBase
+                        : covPlotBase + "_" + channelInput.name;
                     const std::string fracCovPlotName = fLegacySingleChannelMode
-                        ? "histfit_overlay_multisim_frac_cov"
-                        : "histfit_overlay_multisim_frac_cov_" + channelInput.name;
-                    sysUtil.PlotMatrix(*fitChannel.overlayMultisimCovariance, covPlotName);
+                        ? fracCovPlotBase
+                        : fracCovPlotBase + "_" + channelInput.name;
+                    sysUtil.PlotMatrix(*fitChannel.overlayShapeCovariance, covPlotName);
                     sysUtil.PlotFractionalCovarianceMatrix(
-                        *fitChannel.overlayMultisimCovariance,
+                        *fitChannel.overlayShapeCovariance,
                         overlayNominalForCov,
                         fracCovPlotName);
                 }
@@ -1189,10 +1389,10 @@ void HistFitModule::Initialise()
 
     RooStats::HypoTestInverter inverter(asympCalc);
 
-    inverter.SetConfidenceLevel(0.95);
+    inverter.SetConfidenceLevel(0.90);
     inverter.UseCLs(true);  
     inverter.SetVerbose(true);
-    inverter.SetFixedScan(60, 0.0, 0.005);
+    inverter.SetFixedScan(60, 0.0, 0.001);
         
     RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
 

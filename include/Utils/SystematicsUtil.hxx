@@ -59,7 +59,19 @@ namespace Analysis {
         const TH1D& nominalHist,
         const std::vector<TH1D>& detVarHists,
         const std::vector<double>& detVarWeights,
-        const double nomHistScaleFactor
+        const double nomHistScaleFactor,
+        const double uncertaintyCap = 0.35
+    );
+
+    TMatrixD BuildDetVarCovariance(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& cvNode,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        const std::string& variableName,
+        const std::vector<double>& detVarGlobalWeights,
+        double nomHistScaleFactor,
+        const std::string& weightColumn
     );
 
     TMatrixD combineCovarianceMatrices(

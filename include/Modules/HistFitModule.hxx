@@ -61,7 +61,8 @@ private:
         std::vector<std::string> histNames;
         std::vector<SampleType> sampleTypes;
         std::vector<double> sampleWeights;
-        std::optional<TMatrixD> overlayMultisimCovariance;
+        std::optional<TMatrixD> overlayShapeCovariance;
+        bool overlayShapeCovarianceIncludesDetVars = false;
     };
 
     // Helper: build the dataframe vector from a file list
@@ -83,6 +84,17 @@ private:
                                             const TMatrixD& covariance,
                                             const std::string& systNamePrefix,
                                             const std::string& inputFile) const;
+    std::string WriteOverlayShapeSysUncertainty(
+                                            const TH1D& overlayHist,
+                                            const std::string& overlayHistName,
+                                            double sampleWeight,
+                                            double relativeUncertainty,
+                                            const std::string& inputFile) const;
+    void PrintSourceFractionalUncertainties(
+                                            const std::string& channelName,
+                                            const std::string& sourceName,
+                                            const TMatrixD& covariance,
+                                            const TH1D& scaledNominalHist) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
