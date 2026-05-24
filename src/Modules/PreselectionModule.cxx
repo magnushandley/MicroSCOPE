@@ -507,8 +507,8 @@ void PreselectionModule::Initialise()
                 plot.config.outputName,
                 plot.config.logY,
                 plotSampleWeights,
-                0.7,
-                1.3,
+                0.5,
+                1.5,
                 &totalVarianceHist);
         }
     };

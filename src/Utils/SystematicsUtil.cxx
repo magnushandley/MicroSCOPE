@@ -177,7 +177,8 @@ namespace Analysis
         nomHistClone.SetLineWidth(2);
         nomHistClone.SetFillStyle(0);
         // Set title and axis labels here
-        nomHistClone.SetTitle("Multisim Universes Comparison;Logit BDT Score;Events");
+        //Take title from multisim weight column for now since we don't have the variable name here
+        nomHistClone.SetTitle(("Multisim Universes Comparison: " + multisimWeightColumn + ";Logit BDT Score;Events").c_str());
         nomHistClone.SetStats(0); // Optional: remove stats box for cleaner plot
 
         //Debug, set y axis to log scale to better see differences in low-stat bins
@@ -222,7 +223,9 @@ namespace Analysis
         leg->Draw();
 
         c.Update();
-        c.SaveAs("debug_universes_overlay.png");
+        //Plot name: don't have the variable name here, but can use the weight column name as a proxy for now.
+        std::string plotName = "debug_multisim_universes_overlay_" + multisimWeightColumn + ".png";
+        c.SaveAs(plotName.c_str());
 
         // Clean up legend
         delete leg; 

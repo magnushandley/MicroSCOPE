@@ -43,6 +43,11 @@ private:
         std::string lowHistName;
         std::string highHistName;
     };
+    struct SignalNormSystematic {
+        std::string name;
+        double low = 1.0;
+        double high = 1.0;
+    };
     struct DynamicBDTBinning {
         double xMin = 0.0;
         double overflowEdge = 0.0;
@@ -109,6 +114,7 @@ private:
     double EffectiveTestFraction(std::size_t sampleIndex) const;
     double EffectiveSampleWeight(std::size_t sampleIndex) const;
     bool IsFitBackground(SampleType type) const;
+    SignalNormSystematic SignalNormSystematicForChannel(const std::string& channelName) const;
     std::string SanitiseHistName(const std::string& label) const;
     std::vector<ChannelInput> BuildChannelInputs() const;
     void ValidateChannelInputs(const std::vector<ChannelInput>& channels) const;

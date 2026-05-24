@@ -70,10 +70,10 @@ public:
                     const std::string& basename,
                     bool logy,
                     const std::vector<double> weights,
-                    double ratioYMin = 0.7,
-                    double ratioYMax = 1.3,
+                    double ratioYMin = 0.5,
+                    double ratioYMax = 1.5,
                     const TH1D* bkgSysVarHist = nullptr,
-                    const std::string& MicroBooNELabel = "MicroBooNE Simulation In Progress");
+                    const std::string& MicroBooNELabel = "MicroBooNE In Progress: NuMI 2.2e20 POT");
 
     static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     const std::vector<std::string>& labels,
@@ -81,10 +81,10 @@ public:
                     const std::string& basename,
                     bool logy,
                     const std::vector<double> weights,
-                    double ratioYMin = 0.7,
-                    double ratioYMax = 1.3,
+                    double ratioYMin = 0.5,
+                    double ratioYMax = 1.5,
                     const TH1D* bkgSysVarHist = nullptr,
-                    const std::string& MicroBooNELabel = "MicroBooNE Simulation In Progress");
+                    const std::string& MicroBooNELabel = "MicroBooNE In Progress: NuMI 2.2e20 POT");
 
     static void BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
                           const std::vector<std::string>& labels,

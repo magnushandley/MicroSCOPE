@@ -619,7 +619,7 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
     meas.SetOutputFilePrefix("./results/example_UsingC"); // Set this from config later
     meas.SetPOI("SigXsecOverSim");
     //meas.AddConstantParam("alpha_syst1");
-    //meas.AddConstantParam("Lumi");
+    meas.AddConstantParam("Lumi");
     std::cout << "[HistFitModule] Measurement configured" << std::endl;
     
     meas.SetLumi(1.0);
@@ -657,7 +657,7 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
         chan.SetData(channelInputs.histNames[dataIndex], inputFile);
         std::cout << "[HistFitModule] Channel " << channelInputs.name
                   << " data sample set: " << channelInputs.histNames[dataIndex] << std::endl;
-        chan.SetStatErrorConfig(0.02, "Poisson"); // Investigate impact of this
+        chan.SetStatErrorConfig(0.01, "Poisson"); // Investigate impact of this
 
         if (channelInputs.overlayShapeCovariance) {
             const auto nOverlaySamples = std::count_if(
@@ -686,11 +686,16 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                 channelInputs.histNames[i],
                 inputFile);
             if (IsSignalSample(sampleType)) {
-                sample.AddNormFactor("SigXsecOverSim", 0.0005, 0, 0.001);
+                sample.AddNormFactor("SigXsecOverSim", 0.001, 0.0, 0.002);
                 sample.ActivateStatError();
-                sample.AddOverallSys("signal_norm_30pct", 0.7, 1.3);
+                const SignalNormSystematic normSyst =
+                    SignalNormSystematicForChannel(channelInputs.name);
+                sample.AddOverallSys(normSyst.name, normSyst.low, normSyst.high);
                 std::cout << "[HistFitModule] Channel " << channelInputs.name
-                          << " added signal sample: " << channelInputs.histNames[i] << std::endl;
+                          << " added signal sample: " << channelInputs.histNames[i]
+                          << " with OverallSys " << normSyst.name
+                          << " [" << normSyst.low << ", " << normSyst.high << "]"
+                          << std::endl;
             } else if (IsFitBackground(sampleType)) {
                 sample.ActivateStatError();
                 std::cout << "[HistFitModule] Channel " << channelInputs.name
@@ -871,6 +876,26 @@ double HistFitModule::EffectiveSampleWeight(std::size_t sampleIndex) const
 bool HistFitModule::IsFitBackground(SampleType type) const
 {
     return IsOverlaySample(type) || IsDirtSample(type) || type == SampleType::BeamOff;
+}
+
+HistFitModule::SignalNormSystematic
+HistFitModule::SignalNormSystematicForChannel(const std::string& channelName) const
+{
+    if (fLegacySingleChannelMode) {
+        return {"signal_norm_30pct", 0.7, 1.3};
+    }
+
+    if (channelName == "run4b_KDAR" || channelName == "run5_KDAR") {
+        return {"signal_KDAR_norm_30pct", 0.7, 1.3};
+    }
+
+    if (channelName == "run4b_upstream" || channelName == "run5_upstream") {
+        return {"signal_upstream_norm_40pct", 0.6, 1.4};
+    }
+
+    throw std::runtime_error("[HistFitModule] No signal normalisation systematic is configured for channel "
+                             + channelName
+                             + ". Expected one of: run4b_KDAR, run5_KDAR, run4b_upstream, run5_upstream.");
 }
 
 std::string HistFitModule::SanitiseHistName(const std::string& label) const
@@ -1620,7 +1645,7 @@ void HistFitModule::Initialise()
     }
 
     // Save nominal S+B POI snapshot before constructing B-only snapshot.
-    poi->setVal(0.001);
+    poi->setVal(0.0001);
     sbModel->SetSnapshot(RooArgSet(*poi));
 
     RooStats::ModelConfig* bModel =
@@ -1652,7 +1677,7 @@ void HistFitModule::Initialise()
     inverter.SetConfidenceLevel(0.90);
     inverter.UseCLs(true);  
     inverter.SetVerbose(true);
-    inverter.SetFixedScan(60, 0.0, 0.001);
+    inverter.SetFixedScan(300, 0.0, 0.0015);
         
     RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
 
