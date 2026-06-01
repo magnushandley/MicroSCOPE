@@ -1,7 +1,10 @@
 // /Users/magnus/Documents/PhD/MicroSCOPE/src/Utils/SystematicsUtil.cxx
 #include "Utils/SystematicsUtil.hxx"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <TH2D.h>
@@ -15,6 +18,135 @@
 
 namespace Analysis
 {
+    namespace
+    {
+        std::string MakeFileSafeStem(const std::string& value)
+        {
+            std::string safe = value;
+            std::replace_if(
+                safe.begin(),
+                safe.end(),
+                [](const unsigned char c) {
+                    return !(std::isalnum(c) || c == '_' || c == '-');
+                },
+                '_');
+            return safe.empty() ? "hist" : safe;
+        }
+
+        void PlotScaledDetVarComparison(
+            const TH1D& nominalHist,
+            const std::vector<TH1D>& detVarHists,
+            const std::vector<double>& detVarWeights,
+            const double nomHistScaleFactor)
+        {
+            if (detVarHists.empty()) {
+                return;
+            }
+
+            TH1D scaledNominal = nominalHist;
+            scaledNominal.SetDirectory(nullptr);
+            scaledNominal.SetName(Form("%s_scaled_detvar_cv", nominalHist.GetName()));
+            scaledNominal.Scale(nomHistScaleFactor);
+            scaledNominal.SetStats(0);
+            scaledNominal.SetLineColor(kBlack);
+            scaledNominal.SetLineWidth(3);
+            scaledNominal.SetFillStyle(0);
+
+            std::vector<TH1D> scaledVariations;
+            scaledVariations.reserve(detVarHists.size());
+
+            double maxContent = scaledNominal.GetMaximum();
+            double minPositive = std::numeric_limits<double>::max();
+            for (int bin = 1; bin <= scaledNominal.GetNbinsX(); ++bin) {
+                const double content = scaledNominal.GetBinContent(bin);
+                if (content > 0.0) {
+                    minPositive = std::min(minPositive, content);
+                }
+            }
+
+            const std::vector<int> colors = {
+                kRed + 1,
+                kBlue + 1,
+                kGreen + 2,
+                kMagenta + 1,
+                kOrange + 7,
+                kCyan + 2,
+                kViolet + 1,
+                kAzure + 2,
+                kSpring + 5,
+                kPink + 1
+            };
+
+            for (std::size_t i = 0; i < detVarHists.size(); ++i) {
+                scaledVariations.push_back(detVarHists[i]);
+                TH1D& hist = scaledVariations.back();
+                hist.SetDirectory(nullptr);
+                hist.SetName(Form("%s_scaled_detvar_var_%zu", nominalHist.GetName(), i));
+                hist.Scale(detVarWeights[i]);
+                hist.SetStats(0);
+                hist.SetLineColor(colors[i % colors.size()]);
+                hist.SetLineWidth(2);
+                hist.SetFillStyle(0);
+
+                maxContent = std::max(maxContent, hist.GetMaximum());
+                for (int bin = 1; bin <= hist.GetNbinsX(); ++bin) {
+                    const double content = hist.GetBinContent(bin);
+                    if (content > 0.0) {
+                        minPositive = std::min(minPositive, content);
+                    }
+                }
+            }
+
+            const std::string safeName = MakeFileSafeStem(nominalHist.GetName());
+            TCanvas c(
+                Form("c_scaled_detvar_cv_vs_variations_%s", safeName.c_str()),
+                "Scaled detector variation CV vs variations",
+                1000,
+                750);
+
+            scaledNominal.SetTitle(
+                Form("Scaled detector variation CV vs variations: %s;%s;%s",
+                     nominalHist.GetName(),
+                     nominalHist.GetXaxis()->GetTitle(),
+                     nominalHist.GetYaxis()->GetTitle()));
+            scaledNominal.SetMinimum(0.0);
+            scaledNominal.SetMaximum(maxContent > 0.0 ? 1.25 * maxContent : 1.0);
+            scaledNominal.Draw("HIST");
+
+            for (auto& hist : scaledVariations) {
+                hist.Draw("HIST SAME");
+            }
+            scaledNominal.Draw("HIST SAME");
+
+            TLegend leg(0.58, 0.62, 0.90, 0.90);
+            leg.SetBorderSize(0);
+            leg.SetFillStyle(0);
+            leg.AddEntry(&scaledNominal, "Scaled detvar CV", "l");
+            for (std::size_t i = 0; i < scaledVariations.size(); ++i) {
+                leg.AddEntry(&scaledVariations[i], detVarHists[i].GetTitle(), "l");
+            }
+            leg.Draw();
+
+            const std::string outBase = "debug_scaled_detvar_cv_vs_variations_" + safeName;
+            c.SaveAs(Form("%s.pdf", outBase.c_str()));
+            c.SaveAs(Form("%s.png", outBase.c_str()));
+
+            if (minPositive < std::numeric_limits<double>::max()) {
+                c.SetLogy();
+                scaledNominal.SetMinimum(0.5 * minPositive);
+                scaledNominal.SetMaximum(maxContent > 0.0 ? 10.0 * maxContent : 1.0);
+                scaledNominal.Draw("HIST");
+                for (auto& hist : scaledVariations) {
+                    hist.Draw("HIST SAME");
+                }
+                scaledNominal.Draw("HIST SAME");
+                leg.Draw();
+                c.SaveAs(Form("%s_logy.pdf", outBase.c_str()));
+                c.SaveAs(Form("%s_logy.png", outBase.c_str()));
+            }
+        }
+    }
+
     SystematicsUtil::SystematicsUtil(std::string name)
     {
         (void)name;
@@ -461,6 +593,9 @@ namespace Analysis
                     cov(i, j) *= scale[i] * scale[j];
                 }
             }
+
+            PlotScaledDetVarComparison(nominalHist, detVarHists, detVarWeights, nomHistScaleFactor);
+
             return cov;
         }
 

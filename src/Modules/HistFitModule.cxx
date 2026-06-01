@@ -686,7 +686,7 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                 channelInputs.histNames[i],
                 inputFile);
             if (IsSignalSample(sampleType)) {
-                sample.AddNormFactor("SigXsecOverSim", 0.001, 0.0, 0.002);
+                sample.AddNormFactor("SigXsecOverSim", 0.0002, 0.0, 0.003);
                 sample.ActivateStatError();
                 const SignalNormSystematic normSyst =
                     SignalNormSystematicForChannel(channelInputs.name);
@@ -1414,7 +1414,7 @@ void HistFitModule::Initialise()
                               << cachedCovIt->second.GetNcols()
                               << ".\n";
 
-                    overlayShapeCov = overlayShapeCov + detVarCov;
+                    //overlayShapeCov = overlayShapeCov + detVarCov;
                     fitChannel.overlayShapeCovarianceIncludesDetVars = true;
 
                     std::cout << "[HistFitModule] Added detector variation covariance for channel "
@@ -1473,7 +1473,7 @@ void HistFitModule::Initialise()
                             transferredDetVarCov,
                             overlayNominalForCov);
 
-                        overlayShapeCov = overlayShapeCov + transferredDetVarCov;
+                        //overlayShapeCov = overlayShapeCov + transferredDetVarCov;
                         fitChannel.overlayShapeCovarianceIncludesDetVars = true;
 
                         if (fPlotSystematicsDebug) {
@@ -1576,6 +1576,33 @@ void HistFitModule::Initialise()
                 double scaledBinError = originalBinError * sqrt(fRateScaling);
                 hist.SetBinContent(bin, scaledBinContent);
                 hist.SetBinError(bin, scaledBinError);
+            }
+        }
+
+        if (!fitChannel.hists.empty()) {
+            std::cout << "[HistFitModule] Channel " << channelInput.name
+                      << " combined background statistical uncertainty per bin:\n";
+            const int nBins = fitChannel.hists.front().GetNbinsX();
+            for (int bin = 1; bin <= nBins; ++bin) {
+                double totalBackground = 0.0;
+                double totalVariance = 0.0;
+                for (std::size_t i = 0; i < fitChannel.hists.size(); ++i) {
+                    if (!IsFitBackground(fitChannel.sampleTypes[i])) {
+                        continue;
+                    }
+
+                    const double weightedContent =
+                        fitChannel.hists[i].GetBinContent(bin) * fitChannel.sampleWeights[i];
+                    const double weightedError =
+                        fitChannel.hists[i].GetBinError(bin) * fitChannel.sampleWeights[i];
+                    totalBackground += weightedContent;
+                    totalVariance += weightedError * weightedError;
+                }
+
+                std::cout << "  Bin " << bin
+                          << ": background=" << totalBackground
+                          << ", stat_uncert=" << std::sqrt(totalVariance)
+                          << "\n";
             }
         }
 
