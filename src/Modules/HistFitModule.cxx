@@ -1414,7 +1414,7 @@ void HistFitModule::Initialise()
                               << cachedCovIt->second.GetNcols()
                               << ".\n";
 
-                    //overlayShapeCov = overlayShapeCov + detVarCov;
+                    overlayShapeCov = overlayShapeCov + detVarCov;
                     fitChannel.overlayShapeCovarianceIncludesDetVars = true;
 
                     std::cout << "[HistFitModule] Added detector variation covariance for channel "
@@ -1473,7 +1473,7 @@ void HistFitModule::Initialise()
                             transferredDetVarCov,
                             overlayNominalForCov);
 
-                        //overlayShapeCov = overlayShapeCov + transferredDetVarCov;
+                        overlayShapeCov = overlayShapeCov + transferredDetVarCov;
                         fitChannel.overlayShapeCovarianceIncludesDetVars = true;
 
                         if (fPlotSystematicsDebug) {
@@ -1507,17 +1507,27 @@ void HistFitModule::Initialise()
                     const std::string fracCovPlotBase = fitChannel.overlayShapeCovarianceIncludesDetVars
                         ? "histfit_overlay_shape_frac_cov"
                         : "histfit_overlay_multisim_frac_cov";
+                    const std::string corrPlotBase = fitChannel.overlayShapeCovarianceIncludesDetVars
+                        ? "histfit_overlay_shape_corr"
+                        : "histfit_overlay_multisim_corr";
                     const std::string covPlotName = fLegacySingleChannelMode
                         ? covPlotBase
                         : covPlotBase + "_" + channelInput.name;
                     const std::string fracCovPlotName = fLegacySingleChannelMode
                         ? fracCovPlotBase
                         : fracCovPlotBase + "_" + channelInput.name;
+                    const std::string corrPlotName = fLegacySingleChannelMode
+                        ? corrPlotBase
+                        : corrPlotBase + "_" + channelInput.name;
                     sysUtil.PlotMatrix(*fitChannel.overlayShapeCovariance, covPlotName);
                     sysUtil.PlotFractionalCovarianceMatrix(
                         *fitChannel.overlayShapeCovariance,
                         overlayNominalForCov,
                         fracCovPlotName);
+                    sysUtil.PlotCorrelationMatrix(
+                        *fitChannel.overlayShapeCovariance,
+                        overlayNominalForCov,
+                        corrPlotName);
                 }
             }
         }

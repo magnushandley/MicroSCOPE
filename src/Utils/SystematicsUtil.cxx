@@ -789,6 +789,61 @@ namespace Analysis
         c.SaveAs(Form("%s.png", outName.c_str()));
     }
 
+    void SystematicsUtil::PlotCorrelationMatrix(
+    const TMatrixD& cov,
+    const TH1D& nominalHist,
+    const std::string& outName) const
+    {
+        const int nRows = cov.GetNrows();
+        const int nCols = cov.GetNcols();
+        const int nBins = nominalHist.GetNbinsX();
+
+        if (nRows != nCols)
+        {
+            std::ostringstream ss;
+            ss << "PlotCorrelationMatrix: covariance matrix is not square ("
+            << nRows << "x" << nCols << ")";
+            throw std::runtime_error(ss.str());
+        }
+
+        if (nRows != nBins)
+        {
+            std::ostringstream ss;
+            ss << "PlotCorrelationMatrix: matrix dimension (" << nRows
+            << ") does not match nominal histogram bins (" << nBins << ")";
+            throw std::runtime_error(ss.str());
+        }
+
+        TH2D hist(
+            Form("%s_hist", outName.c_str()),
+            Form("Correlation matrix: %s;Bin index;Bin index", outName.c_str()),
+            nCols, 0.5, nCols + 0.5,
+            nRows, 0.5, nRows + 0.5);
+
+        hist.SetStats(0);
+        hist.SetMinimum(-1.0);
+        hist.SetMaximum(1.0);
+
+        for (int i = 0; i < nRows; ++i)
+        {
+            const double var_i = cov(i, i);
+            for (int j = 0; j < nCols; ++j)
+            {
+                const double var_j = cov(j, j);
+                const double denom = (var_i > 0.0 && var_j > 0.0)
+                    ? std::sqrt(var_i * var_j)
+                    : 0.0;
+                const double corr = (denom != 0.0) ? (cov(i, j) / denom) : 0.0;
+                hist.SetBinContent(j + 1, i + 1, corr);
+            }
+        }
+
+        TCanvas c(Form("%s_canvas", outName.c_str()), "Correlation Matrix", 900, 800);
+        hist.Draw("COLZ");
+        c.SaveAs(Form("%s.pdf", outName.c_str()));
+        c.SaveAs(Form("%s.png", outName.c_str()));
+    }
+
 
 
     std::pair<TMatrixD, TVectorD>

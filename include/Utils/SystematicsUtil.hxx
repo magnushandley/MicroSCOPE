@@ -87,6 +87,11 @@ namespace Analysis {
         const TH1D& nominalHist,
         const std::string& outName = "fractional_covariance") const;
 
+    void PlotCorrelationMatrix(
+        const TMatrixD& cov,
+        const TH1D& nominalHist,
+        const std::string& outName = "correlation_matrix") const;
+
     std::vector<TVectorD> CreateNuisanceParams(const TMatrixD& cov);
 
     void PlotNuisanceParams(
