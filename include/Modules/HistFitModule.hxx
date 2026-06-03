@@ -43,6 +43,10 @@ private:
         std::string lowHistName;
         std::string highHistName;
     };
+    struct RegionBinRange {
+        int firstBin = 1;
+        int lastBin = 1;
+    };
     struct SignalNormSystematic {
         std::string name;
         double low = 1.0;
@@ -69,6 +73,8 @@ private:
         std::vector<double> sampleWeights;
         std::optional<TMatrixD> overlayShapeCovariance;
         bool overlayShapeCovarianceIncludesDetVars = false;
+        std::optional<RegionBinRange> overlayShapeCovarianceBinRange;
+        std::string overlayShapeSystNamePrefix;
     };
 
     // Helper: build the dataframe vector from a file list
@@ -90,6 +96,14 @@ private:
                                             const TMatrixD& covariance,
                                             const std::string& systNamePrefix,
                                             const std::string& inputFile) const;
+    std::vector<HistoSysVariation> WriteOverlayHistoSysVariationsForBinRange(
+                                            const TH1D& overlayHist,
+                                            const std::string& overlayHistName,
+                                            double sampleWeight,
+                                            const TMatrixD& fullCovariance,
+                                            RegionBinRange sourceBinRange,
+                                            const std::string& systNamePrefix,
+                                            const std::string& inputFile) const;
     std::string WriteOverlayShapeSysUncertainty(
                                             const TH1D& overlayHist,
                                             const std::string& overlayHistName,
@@ -107,6 +121,12 @@ private:
     TMatrixD AbsoluteCovarianceFromFractional(
                                             const TMatrixD& fractionalCovariance,
                                             const TH1D& scaledNominalHist) const;
+    TH1D SliceHistogramBins(
+                                            const TH1D& source,
+                                            const std::string& name,
+                                            RegionBinRange binRange) const;
+    std::vector<ChannelFitInputs> BuildSplitRegionChannels(
+                                            const std::vector<ChannelFitInputs>& fullChannels) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
@@ -144,6 +164,8 @@ private:
     double fBDTScoreMinX; ///< Lower edge for dynamic BDT-score histograms
     int fBDTScoreBinsBelowOverflow; ///< Number of BDT-score bins before the overflow-like bin
     double fBDTScoreOverflowBackgroundEvents; ///< Target predicted background yield in overflow-like bin
+    bool fSplitBDTRegions; ///< Whether to split each BDT histogram into CR/SR HistFactory channels
+    int fSignalRegionTopBins; ///< Number of highest visible BDT bins assigned to the signal region
     bool fLegacySingleChannelMode; ///< True when SampleChannels is omitted and legacy names should be preserved
     std::unordered_map<std::string, std::string> fDetVarCovarianceTransfers; ///< target channel -> source channel
     std::string fDetVarCovarianceTransferMode; ///< Transfer mode for temporary detector covariance reuse

@@ -166,6 +166,8 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fBDTScoreMinX(cfg.GetValue("HistFitModule.BDTScoreMinX", -5.0))
     , fBDTScoreBinsBelowOverflow(cfg.GetValue("HistFitModule.BDTScoreBinsBelowOverflow", 9))
     , fBDTScoreOverflowBackgroundEvents(cfg.GetValue("HistFitModule.BDTScoreOverflowBackgroundEvents", 5.0))
+    , fSplitBDTRegions(cfg.GetValue("HistFitModule.SplitBDTRegions", false))
+    , fSignalRegionTopBins(cfg.GetValue("HistFitModule.SignalRegionTopBins", 5))
     , fLegacySingleChannelMode(!ConfigHasKey(cfg, "HistFitModule.SampleChannels"))
     , fDetVarCovarianceTransferMode(ToLowerCopy(cfg.GetValue("HistFitModule.DetVarCovarianceTransferMode", "fractional")))
 {
@@ -252,6 +254,17 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     }
     if (!std::isfinite(fBDTScoreOverflowBackgroundEvents) || fBDTScoreOverflowBackgroundEvents <= 0.0) {
         throw std::runtime_error("[HistFitModule] BDTScoreOverflowBackgroundEvents must be finite and positive.");
+    }
+    if (fSignalRegionTopBins <= 0) {
+        throw std::runtime_error("[HistFitModule] SignalRegionTopBins must be positive.");
+    }
+    if (fSplitBDTRegions) {
+        const int totalVisibleBins = fBDTScoreBinsBelowOverflow + 1;
+        if (fSignalRegionTopBins >= totalVisibleBins) {
+            throw std::runtime_error("[HistFitModule] SignalRegionTopBins must leave at least one control-region bin. "
+                                     "Configured top bins: " + std::to_string(fSignalRegionTopBins)
+                                     + ", visible BDT bins: " + std::to_string(totalVisibleBins) + ".");
+        }
     }
     if (!fDetVarCovarianceTransfers.empty() && fDetVarCovarianceTransferMode != "fractional") {
         throw std::runtime_error("[HistFitModule] DetVarCovarianceTransferMode \""
@@ -444,6 +457,119 @@ TMatrixD HistFitModule::AbsoluteCovarianceFromFractional(
     return covariance;
 }
 
+TH1D HistFitModule::SliceHistogramBins(
+    const TH1D& source,
+    const std::string& name,
+    RegionBinRange binRange) const
+{
+    const int nSourceBins = source.GetNbinsX();
+    if (binRange.firstBin < 1 || binRange.lastBin > nSourceBins || binRange.firstBin > binRange.lastBin) {
+        throw std::runtime_error("[HistFitModule] Invalid histogram slice range "
+                                 + std::to_string(binRange.firstBin) + "-"
+                                 + std::to_string(binRange.lastBin)
+                                 + " for histogram " + source.GetName()
+                                 + " with " + std::to_string(nSourceBins) + " bins.");
+    }
+
+    const int nSliceBins = binRange.lastBin - binRange.firstBin + 1;
+    const double xMin = source.GetBinLowEdge(binRange.firstBin);
+    const double xMax = source.GetBinLowEdge(binRange.lastBin) + source.GetBinWidth(binRange.lastBin);
+    TH1D sliced(name.c_str(), source.GetTitle(), nSliceBins, xMin, xMax);
+    sliced.SetDirectory(nullptr);
+    sliced.Sumw2();
+    sliced.GetXaxis()->SetTitle(source.GetXaxis()->GetTitle());
+    sliced.GetYaxis()->SetTitle(source.GetYaxis()->GetTitle());
+
+    for (int outBin = 1; outBin <= nSliceBins; ++outBin) {
+        const int sourceBin = binRange.firstBin + outBin - 1;
+        sliced.SetBinContent(outBin, source.GetBinContent(sourceBin));
+        sliced.SetBinError(outBin, source.GetBinError(sourceBin));
+    }
+
+    return sliced;
+}
+
+std::vector<HistFitModule::ChannelFitInputs>
+HistFitModule::BuildSplitRegionChannels(const std::vector<ChannelFitInputs>& fullChannels) const
+{
+    std::vector<ChannelFitInputs> splitChannels;
+    splitChannels.reserve(fullChannels.size() * 2);
+
+    for (const ChannelFitInputs& fullChannel : fullChannels) {
+        if (fullChannel.hists.empty()) {
+            throw std::runtime_error("[HistFitModule] Cannot split empty channel " + fullChannel.name + ".");
+        }
+
+        const int nBins = fullChannel.hists.front().GetNbinsX();
+        for (const TH1D& hist : fullChannel.hists) {
+            if (hist.GetNbinsX() != nBins) {
+                throw std::runtime_error("[HistFitModule] Channel " + fullChannel.name
+                                         + " contains histograms with inconsistent bin counts.");
+            }
+        }
+        if (fSignalRegionTopBins >= nBins) {
+            throw std::runtime_error("[HistFitModule] SignalRegionTopBins must leave at least one control-region bin for channel "
+                                     + fullChannel.name + ". Configured top bins: "
+                                     + std::to_string(fSignalRegionTopBins)
+                                     + ", channel bins: " + std::to_string(nBins) + ".");
+        }
+
+        const int srFirstBin = nBins - fSignalRegionTopBins + 1;
+        const RegionBinRange crRange{1, srFirstBin - 1};
+        const RegionBinRange srRange{srFirstBin, nBins};
+
+        ChannelFitInputs crChannel;
+        ChannelFitInputs srChannel;
+        crChannel.name = fullChannel.name + "_cr";
+        srChannel.name = fullChannel.name + "_sr";
+        crChannel.overlayShapeCovarianceIncludesDetVars = fullChannel.overlayShapeCovarianceIncludesDetVars;
+        srChannel.overlayShapeCovarianceIncludesDetVars = fullChannel.overlayShapeCovarianceIncludesDetVars;
+
+        if (fullChannel.overlayShapeCovariance) {
+            crChannel.overlayShapeCovariance = *fullChannel.overlayShapeCovariance;
+            srChannel.overlayShapeCovariance = *fullChannel.overlayShapeCovariance;
+            crChannel.overlayShapeCovarianceBinRange = crRange;
+            srChannel.overlayShapeCovarianceBinRange = srRange;
+
+            const std::string systNameBase = fullChannel.overlayShapeCovarianceIncludesDetVars
+                ? "overlay_shape"
+                : "overlay_multisim";
+            crChannel.overlayShapeSystNamePrefix = fLegacySingleChannelMode
+                ? systNameBase + "_eig"
+                : systNameBase + "_" + fullChannel.name + "_eig";
+            srChannel.overlayShapeSystNamePrefix = crChannel.overlayShapeSystNamePrefix;
+        }
+
+        for (std::size_t i = 0; i < fullChannel.hists.size(); ++i) {
+            const std::string crHistName = fullChannel.histNames[i] + "_cr";
+            const std::string srHistName = fullChannel.histNames[i] + "_sr";
+
+            crChannel.hists.push_back(SliceHistogramBins(fullChannel.hists[i], crHistName, crRange));
+            srChannel.hists.push_back(SliceHistogramBins(fullChannel.hists[i], srHistName, srRange));
+
+            crChannel.labels.push_back(fullChannel.labels[i] + " CR");
+            srChannel.labels.push_back(fullChannel.labels[i] + " SR");
+            crChannel.histNames.push_back(crHistName);
+            srChannel.histNames.push_back(srHistName);
+            crChannel.sampleTypes.push_back(fullChannel.sampleTypes[i]);
+            srChannel.sampleTypes.push_back(fullChannel.sampleTypes[i]);
+            crChannel.sampleWeights.push_back(fullChannel.sampleWeights[i]);
+            srChannel.sampleWeights.push_back(fullChannel.sampleWeights[i]);
+        }
+
+        std::cout << "[HistFitModule] Split channel " << fullChannel.name
+                  << " into " << crChannel.name << " bins " << crRange.firstBin
+                  << "-" << crRange.lastBin << " and " << srChannel.name
+                  << " bins " << srRange.firstBin << "-" << srRange.lastBin
+                  << " (top " << fSignalRegionTopBins << " bins).\n";
+
+        splitChannels.push_back(std::move(crChannel));
+        splitChannels.push_back(std::move(srChannel));
+    }
+
+    return splitChannels;
+}
+
 std::vector<HistFitModule::HistoSysVariation>
 HistFitModule::WriteOverlayHistoSysVariations(
     const TH1D& overlayHist,
@@ -545,6 +671,117 @@ HistFitModule::WriteOverlayHistoSysVariations(
 
         //Debug - 
         
+
+        outFile.cd();
+        lowHist.Write("", TObject::kOverwrite);
+        highHist.Write("", TObject::kOverwrite);
+        variations.push_back({systName, lowHistName, highHistName});
+    }
+
+    outFile.Close();
+    return variations;
+}
+
+std::vector<HistFitModule::HistoSysVariation>
+HistFitModule::WriteOverlayHistoSysVariationsForBinRange(
+    const TH1D& overlayHist,
+    const std::string& overlayHistName,
+    double sampleWeight,
+    const TMatrixD& fullCovariance,
+    RegionBinRange sourceBinRange,
+    const std::string& systNamePrefix,
+    const std::string& inputFile) const
+{
+    const int nSliceBins = overlayHist.GetNbinsX();
+    const int nFullBins = fullCovariance.GetNrows();
+    if (fullCovariance.GetNcols() != nFullBins) {
+        throw std::runtime_error("[HistFitModule] Full overlay covariance is not square.");
+    }
+    if (sourceBinRange.firstBin < 1 || sourceBinRange.lastBin > nFullBins
+        || sourceBinRange.firstBin > sourceBinRange.lastBin) {
+        throw std::runtime_error("[HistFitModule] Invalid source bin range "
+                                 + std::to_string(sourceBinRange.firstBin) + "-"
+                                 + std::to_string(sourceBinRange.lastBin)
+                                 + " for full covariance with "
+                                 + std::to_string(nFullBins) + " bins.");
+    }
+    if (nSliceBins != sourceBinRange.lastBin - sourceBinRange.firstBin + 1) {
+        throw std::runtime_error("[HistFitModule] Overlay slice histogram bin count ("
+                                 + std::to_string(nSliceBins)
+                                 + ") does not match source bin range "
+                                 + std::to_string(sourceBinRange.firstBin) + "-"
+                                 + std::to_string(sourceBinRange.lastBin) + ".");
+    }
+
+    TH1D nominal = overlayHist;
+    nominal.SetDirectory(nullptr);
+    nominal.Scale(sampleWeight);
+
+    SystematicsUtil sysUtil;
+    auto [eigenVectors, eigenValues] = sysUtil.EigenDecomposition(fullCovariance);
+
+    double maxDiag = 0.0;
+    for (int i = 0; i < fullCovariance.GetNrows(); ++i) {
+        maxDiag = std::max(maxDiag, std::abs(fullCovariance(i, i)));
+    }
+    const double negativeEigenvalueTolerance = std::max(1e-9, 1e-10 * maxDiag);
+    const double zeroShiftTolerance = 1e-12;
+
+    TFile outFile(inputFile.c_str(), "UPDATE");
+    if (outFile.IsZombie()) {
+        throw std::runtime_error("[HistFitModule] Cannot update histogram file with split HistoSys variations: "
+                                 + inputFile);
+    }
+
+    std::vector<HistoSysVariation> variations;
+    for (int eig = 0; eig < eigenValues.GetNrows(); ++eig) {
+        double eigenValue = eigenValues(eig);
+        if (!std::isfinite(eigenValue)) {
+            std::cout << "[HistFitModule] Skipping non-finite overlay covariance eigenvalue "
+                      << eig << ".\n";
+            continue;
+        }
+        if (eigenValue < -negativeEigenvalueTolerance) {
+            throw std::runtime_error("[HistFitModule] Overlay covariance has materially negative eigenvalue "
+                                     + std::to_string(eig) + ": " + std::to_string(eigenValue));
+        }
+        if (eigenValue < 0.0) {
+            eigenValue = 0.0;
+        }
+
+        const double shiftScale = std::sqrt(eigenValue);
+        double maxAbsShift = 0.0;
+        for (int outBin = 1; outBin <= nSliceBins; ++outBin) {
+            const int sourceBin = sourceBinRange.firstBin + outBin - 1;
+            const double shift = eigenVectors(sourceBin - 1, eig) * shiftScale;
+            if (!std::isfinite(shift)) {
+                maxAbsShift = std::numeric_limits<double>::infinity();
+                break;
+            }
+            maxAbsShift = std::max(maxAbsShift, std::abs(shift));
+        }
+        if (!std::isfinite(maxAbsShift) || maxAbsShift <= zeroShiftTolerance) {
+            continue;
+        }
+
+        const std::string systName = systNamePrefix + std::to_string(eig);
+        const std::string lowHistName = overlayHistName + "_multisim_eig" + std::to_string(eig) + "_low";
+        const std::string highHistName = overlayHistName + "_multisim_eig" + std::to_string(eig) + "_high";
+
+        TH1D lowHist = nominal;
+        TH1D highHist = nominal;
+        lowHist.SetName(lowHistName.c_str());
+        highHist.SetName(highHistName.c_str());
+        lowHist.SetDirectory(nullptr);
+        highHist.SetDirectory(nullptr);
+
+        for (int outBin = 1; outBin <= nSliceBins; ++outBin) {
+            const int sourceBin = sourceBinRange.firstBin + outBin - 1;
+            const double nominalBin = nominal.GetBinContent(outBin);
+            const double shift = eigenVectors(sourceBin - 1, eig) * shiftScale;
+            lowHist.SetBinContent(outBin, std::max(0.0, nominalBin - shift));
+            highHist.SetBinContent(outBin, std::max(0.0, nominalBin + shift));
+        }
 
         outFile.cd();
         lowHist.Write("", TObject::kOverwrite);
@@ -705,16 +942,28 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                     const std::string systNameBase = channelInputs.overlayShapeCovarianceIncludesDetVars
                         ? "overlay_shape"
                         : "overlay_multisim";
-                    const std::string systNamePrefix = fLegacySingleChannelMode
+                    const std::string defaultSystNamePrefix = fLegacySingleChannelMode
                         ? systNameBase + "_eig"
                         : systNameBase + "_" + channelInputs.name + "_eig";
-                    const auto variations = WriteOverlayHistoSysVariations(
-                        channelInputs.hists[i],
-                        channelInputs.histNames[i],
-                        channelInputs.sampleWeights[i],
-                        *channelInputs.overlayShapeCovariance,
-                        systNamePrefix,
-                        inputFile);
+                    const std::string systNamePrefix = channelInputs.overlayShapeSystNamePrefix.empty()
+                        ? defaultSystNamePrefix
+                        : channelInputs.overlayShapeSystNamePrefix;
+                    const auto variations = channelInputs.overlayShapeCovarianceBinRange
+                        ? WriteOverlayHistoSysVariationsForBinRange(
+                            channelInputs.hists[i],
+                            channelInputs.histNames[i],
+                            channelInputs.sampleWeights[i],
+                            *channelInputs.overlayShapeCovariance,
+                            *channelInputs.overlayShapeCovarianceBinRange,
+                            systNamePrefix,
+                            inputFile)
+                        : WriteOverlayHistoSysVariations(
+                            channelInputs.hists[i],
+                            channelInputs.histNames[i],
+                            channelInputs.sampleWeights[i],
+                            *channelInputs.overlayShapeCovariance,
+                            systNamePrefix,
+                            inputFile);
                     for (const auto& variation : variations) {
                         sample.AddHistoSys(
                             variation.systName,
@@ -885,11 +1134,21 @@ HistFitModule::SignalNormSystematicForChannel(const std::string& channelName) co
         return {"signal_norm_30pct", 0.7, 1.3};
     }
 
-    if (channelName == "run4b_KDAR" || channelName == "run5_KDAR") {
+    std::string baseChannelName = channelName;
+    const auto stripRegionSuffix = [&baseChannelName](const std::string& suffix) {
+        if (baseChannelName.size() > suffix.size()
+            && baseChannelName.compare(baseChannelName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            baseChannelName.erase(baseChannelName.size() - suffix.size());
+        }
+    };
+    stripRegionSuffix("_cr");
+    stripRegionSuffix("_sr");
+
+    if (baseChannelName == "run4b_KDAR" || baseChannelName == "run5_KDAR") {
         return {"signal_KDAR_norm_30pct", 0.7, 1.3};
     }
 
-    if (channelName == "run4b_upstream" || channelName == "run5_upstream") {
+    if (baseChannelName == "run4b_upstream" || baseChannelName == "run5_upstream") {
         return {"signal_upstream_norm_40pct", 0.6, 1.4};
     }
 
@@ -1633,6 +1892,23 @@ void HistFitModule::Initialise()
         }
 
         fitChannels.push_back(std::move(fitChannel));
+    }
+
+    if (fSplitBDTRegions) {
+        std::cout << "[HistFitModule] SplitBDTRegions enabled: building simultaneous CR/SR HistFactory channels "
+                  << "with top " << fSignalRegionTopBins << " BDT bins assigned to SR.\n";
+        fitChannels = BuildSplitRegionChannels(fitChannels);
+        allFitHistsRateScaled.clear();
+        allFitHistNames.clear();
+        allFitSampleWeights.clear();
+
+        for (const ChannelFitInputs& channel : fitChannels) {
+            for (std::size_t i = 0; i < channel.hists.size(); ++i) {
+                allFitHistsRateScaled.push_back(channel.hists[i]);
+                allFitHistNames.push_back(channel.histNames[i]);
+                allFitSampleWeights.push_back(channel.sampleWeights[i]);
+            }
+        }
     }
 
     if (allFitHistsRateScaled.empty()) {
