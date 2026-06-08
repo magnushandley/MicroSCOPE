@@ -76,6 +76,18 @@ private:
         std::optional<RegionBinRange> overlayShapeCovarianceBinRange;
         std::string overlayShapeSystNamePrefix;
     };
+    struct SRPredictionSummary {
+        std::string channelName;
+        double preFitTotal = 0.0;
+        double postFitTotal = 0.0;
+        double dataTotal = 0.0;
+        std::vector<double> binLowEdges;
+        std::vector<double> binHighEdges;
+        std::vector<double> preFitBins;
+        std::vector<double> postFitBins;
+        std::vector<double> dataBins;
+        std::vector<double> dataErrors;
+    };
 
     // Helper: build the dataframe vector from a file list
     std::vector<ROOT::RDF::RNode> BuildDataFrames(const std::vector<std::string>& files,
@@ -127,6 +139,27 @@ private:
                                             RegionBinRange binRange) const;
     std::vector<ChannelFitInputs> BuildSplitRegionChannels(
                                             const std::vector<ChannelFitInputs>& fullChannels) const;
+    bool AsimovOffsetAppliesToChannel(const std::string& channelName) const;
+    void ReplaceDataWithAsimov(std::vector<ChannelFitInputs>& channels) const;
+    std::vector<ChannelFitInputs> FilterChannelsBySuffix(
+                                            const std::vector<ChannelFitInputs>& channels,
+                                            const std::string& suffix) const;
+    void CopyNuisanceValuesByName(RooWorkspace& sourceWs, RooWorkspace& targetWs) const;
+    double ExpectedEventsForChannel(RooWorkspace& ws, const std::string& channelName) const;
+    std::vector<double> ExpectedBinEventsForChannel(
+                                            RooWorkspace& ws,
+                                            const std::string& channelName,
+                                            const TH1D& referenceHist) const;
+    double DataEventsForChannel(const ChannelFitInputs& channel) const;
+    std::vector<double> DataBinEventsForChannel(const ChannelFitInputs& channel) const;
+    std::vector<double> DataBinErrorsForChannel(const ChannelFitInputs& channel) const;
+    const TH1D& DataHistogramForChannel(const ChannelFitInputs& channel) const;
+    std::vector<SRPredictionSummary> WriteSRConstraintComparison(
+                                            RooWorkspace& ws,
+                                            const std::vector<ChannelFitInputs>& channels,
+                                            const std::string& inputFile) const;
+    void WriteSRConstraintComparisonOutputs(
+                                            const std::vector<SRPredictionSummary>& summaries) const;
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
@@ -166,6 +199,11 @@ private:
     double fBDTScoreOverflowBackgroundEvents; ///< Target predicted background yield in overflow-like bin
     bool fSplitBDTRegions; ///< Whether to split each BDT histogram into CR/SR HistFactory channels
     int fSignalRegionTopBins; ///< Number of highest visible BDT bins assigned to the signal region
+    bool fUseAsimovData; ///< Replace data histograms with background-plus-overlay-offset Asimov data
+    double fAsimovOverlayOffsetFraction; ///< Fraction of overlay prediction added to selected Asimov regions
+    std::string fAsimovOverlayOffsetRegions; ///< control, signal, or all
+    bool fWriteSRConstraintComparison; ///< Write pre/post constrained SR prediction diagnostics
+    std::string fSRConstraintComparisonFitMode; ///< cr_only or simultaneous
     bool fLegacySingleChannelMode; ///< True when SampleChannels is omitted and legacy names should be preserved
     std::unordered_map<std::string, std::string> fDetVarCovarianceTransfers; ///< target channel -> source channel
     std::string fDetVarCovarianceTransferMode; ///< Transfer mode for temporary detector covariance reuse

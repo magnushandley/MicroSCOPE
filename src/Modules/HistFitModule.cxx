@@ -9,6 +9,7 @@
 #include <cctype>
 #include <sstream>
 #include <vector>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <cmath>
@@ -22,10 +23,20 @@
 #include <TTree.h>
 #include <TH1D.h>
 #include <TChain.h>
+#include <TCanvas.h>
+#include <TLegend.h>
 #include <TObject.h>
 #include <TVectorD.h>
 #include <cstdio>
 
+#include <RooAbsData.h>
+#include <RooAbsPdf.h>
+#include <RooAbsReal.h>
+#include <RooFit.h>
+#include <RooFitResult.h>
+#include <RooRealVar.h>
+#include <RooSimultaneous.h>
+#include <RooWorkspace.h>
 #include <RooStats/HistFactory/MakeModelAndMeasurementsFast.h>
 #include <RooStats/HistFactory/Measurement.h>
 
@@ -56,6 +67,12 @@ std::string StripOptionalQuotes(std::string value)
         value = value.substr(1, value.size() - 2);
     }
     return value;
+}
+
+bool HasSuffix(const std::string& value, const std::string& suffix)
+{
+    return value.size() >= suffix.size()
+        && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 std::string DefaultPlotWeightColumn(SampleType sampleType)
@@ -168,6 +185,11 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fBDTScoreOverflowBackgroundEvents(cfg.GetValue("HistFitModule.BDTScoreOverflowBackgroundEvents", 5.0))
     , fSplitBDTRegions(cfg.GetValue("HistFitModule.SplitBDTRegions", false))
     , fSignalRegionTopBins(cfg.GetValue("HistFitModule.SignalRegionTopBins", 5))
+    , fUseAsimovData(cfg.GetValue("HistFitModule.UseAsimovData", false))
+    , fAsimovOverlayOffsetFraction(cfg.GetValue("HistFitModule.AsimovOverlayOffsetFraction", 0.0))
+    , fAsimovOverlayOffsetRegions(ToLowerCopy(cfg.GetValue("HistFitModule.AsimovOverlayOffsetRegions", "control")))
+    , fWriteSRConstraintComparison(cfg.GetValue("HistFitModule.WriteSRConstraintComparison", false))
+    , fSRConstraintComparisonFitMode(ToLowerCopy(cfg.GetValue("HistFitModule.SRConstraintComparisonFitMode", "cr_only")))
     , fLegacySingleChannelMode(!ConfigHasKey(cfg, "HistFitModule.SampleChannels"))
     , fDetVarCovarianceTransferMode(ToLowerCopy(cfg.GetValue("HistFitModule.DetVarCovarianceTransferMode", "fractional")))
 {
@@ -265,6 +287,26 @@ HistFitModule::HistFitModule(const TEnv& cfg)
                                      "Configured top bins: " + std::to_string(fSignalRegionTopBins)
                                      + ", visible BDT bins: " + std::to_string(totalVisibleBins) + ".");
         }
+    }
+    if (!std::isfinite(fAsimovOverlayOffsetFraction)) {
+        throw std::runtime_error("[HistFitModule] AsimovOverlayOffsetFraction must be finite.");
+    }
+    if (fAsimovOverlayOffsetRegions != "control"
+        && fAsimovOverlayOffsetRegions != "signal"
+        && fAsimovOverlayOffsetRegions != "all") {
+        throw std::runtime_error("[HistFitModule] AsimovOverlayOffsetRegions must be one of: control, signal, all.");
+    }
+    if ((fUseAsimovData || fWriteSRConstraintComparison)
+        && (fAsimovOverlayOffsetRegions == "control" || fAsimovOverlayOffsetRegions == "signal")
+        && !fSplitBDTRegions) {
+        throw std::runtime_error("[HistFitModule] Region-specific Asimov overlay offsets require SplitBDTRegions=true.");
+    }
+    if (fSRConstraintComparisonFitMode != "cr_only"
+        && fSRConstraintComparisonFitMode != "simultaneous") {
+        throw std::runtime_error("[HistFitModule] SRConstraintComparisonFitMode must be one of: cr_only, simultaneous.");
+    }
+    if (fWriteSRConstraintComparison && !fSplitBDTRegions) {
+        throw std::runtime_error("[HistFitModule] WriteSRConstraintComparison requires SplitBDTRegions=true.");
     }
     if (!fDetVarCovarianceTransfers.empty() && fDetVarCovarianceTransferMode != "fractional") {
         throw std::runtime_error("[HistFitModule] DetVarCovarianceTransferMode \""
@@ -568,6 +610,604 @@ HistFitModule::BuildSplitRegionChannels(const std::vector<ChannelFitInputs>& ful
     }
 
     return splitChannels;
+}
+
+bool HistFitModule::AsimovOffsetAppliesToChannel(const std::string& channelName) const
+{
+    if (fAsimovOverlayOffsetRegions == "all") {
+        return true;
+    }
+    if (fAsimovOverlayOffsetRegions == "control") {
+        return HasSuffix(channelName, "_cr");
+    }
+    if (fAsimovOverlayOffsetRegions == "signal") {
+        return HasSuffix(channelName, "_sr");
+    }
+
+    throw std::runtime_error("[HistFitModule] Unsupported Asimov overlay offset region setting: "
+                             + fAsimovOverlayOffsetRegions);
+}
+
+void HistFitModule::ReplaceDataWithAsimov(std::vector<ChannelFitInputs>& channels) const
+{
+    if (!fUseAsimovData) {
+        return;
+    }
+
+    std::cout << "[HistFitModule] Replacing data histograms with Asimov background prediction plus "
+              << fAsimovOverlayOffsetFraction << " * overlay in "
+              << fAsimovOverlayOffsetRegions << " region(s).\n";
+
+    for (ChannelFitInputs& channel : channels) {
+        std::optional<std::size_t> dataIndex;
+        std::optional<std::size_t> overlayIndex;
+        for (std::size_t i = 0; i < channel.sampleTypes.size(); ++i) {
+            if (IsDataSample(channel.sampleTypes[i])) {
+                dataIndex = i;
+            }
+            if (IsOverlaySample(channel.sampleTypes[i])) {
+                overlayIndex = i;
+            }
+        }
+
+        if (!dataIndex) {
+            throw std::runtime_error("[HistFitModule] Cannot build Asimov data for channel "
+                                     + channel.name + ": no data sample.");
+        }
+        if (fAsimovOverlayOffsetFraction != 0.0
+            && AsimovOffsetAppliesToChannel(channel.name)
+            && !overlayIndex) {
+            throw std::runtime_error("[HistFitModule] Cannot apply Asimov overlay offset for channel "
+                                     + channel.name + ": no overlay sample.");
+        }
+
+        TH1D& dataHist = channel.hists[*dataIndex];
+        const double dataWeight = channel.sampleWeights[*dataIndex];
+        if (!std::isfinite(dataWeight) || dataWeight <= 0.0) {
+            throw std::runtime_error("[HistFitModule] Data sample weight must be positive to build Asimov data for channel "
+                                     + channel.name + ".");
+        }
+
+        const bool applyOffset = AsimovOffsetAppliesToChannel(channel.name);
+        for (int bin = 1; bin <= dataHist.GetNbinsX(); ++bin) {
+            double backgroundSaved = 0.0;
+            double overlaySaved = 0.0;
+
+            for (std::size_t i = 0; i < channel.hists.size(); ++i) {
+                if (!IsFitBackground(channel.sampleTypes[i])) {
+                    continue;
+                }
+
+                const double savedContent =
+                    channel.hists[i].GetBinContent(bin) * channel.sampleWeights[i];
+                backgroundSaved += savedContent;
+                if (IsOverlaySample(channel.sampleTypes[i])) {
+                    overlaySaved += savedContent;
+                }
+            }
+
+            const double offsetSaved = applyOffset
+                ? fAsimovOverlayOffsetFraction * overlaySaved
+                : 0.0;
+            const double asimovSaved = backgroundSaved + offsetSaved;
+            if (!std::isfinite(asimovSaved) || asimovSaved < 0.0) {
+                throw std::runtime_error("[HistFitModule] Asimov data is negative or non-finite for channel "
+                                         + channel.name + ", bin " + std::to_string(bin)
+                                         + ": background=" + std::to_string(backgroundSaved)
+                                         + ", overlay_offset=" + std::to_string(offsetSaved) + ".");
+            }
+
+            dataHist.SetBinContent(bin, asimovSaved / dataWeight);
+            dataHist.SetBinError(bin, std::sqrt(asimovSaved) / dataWeight);
+        }
+    }
+}
+
+std::vector<HistFitModule::ChannelFitInputs>
+HistFitModule::FilterChannelsBySuffix(
+    const std::vector<ChannelFitInputs>& channels,
+    const std::string& suffix) const
+{
+    std::vector<ChannelFitInputs> filtered;
+    for (const ChannelFitInputs& channel : channels) {
+        if (HasSuffix(channel.name, suffix)) {
+            filtered.push_back(channel);
+        }
+    }
+    return filtered;
+}
+
+void HistFitModule::CopyNuisanceValuesByName(RooWorkspace& sourceWs, RooWorkspace& targetWs) const
+{
+    auto* sourceMc = static_cast<RooStats::ModelConfig*>(sourceWs.obj("ModelConfig"));
+    auto* targetMc = static_cast<RooStats::ModelConfig*>(targetWs.obj("ModelConfig"));
+    if (!sourceMc || !targetMc || !sourceMc->GetNuisanceParameters() || !targetMc->GetNuisanceParameters()) {
+        throw std::runtime_error("[HistFitModule] Cannot copy nuisance values: missing ModelConfig nuisance sets.");
+    }
+
+    TIterator* it = sourceMc->GetNuisanceParameters()->createIterator();
+    TObject* obj = nullptr;
+    int copied = 0;
+    while ((obj = it->Next())) {
+        auto* sourceVar = dynamic_cast<RooRealVar*>(obj);
+        if (!sourceVar) {
+            continue;
+        }
+
+        auto* targetVar = dynamic_cast<RooRealVar*>(
+            targetMc->GetNuisanceParameters()->find(sourceVar->GetName()));
+        if (!targetVar) {
+            continue;
+        }
+
+        targetVar->setVal(sourceVar->getVal());
+        ++copied;
+    }
+    delete it;
+
+    std::cout << "[HistFitModule] Copied " << copied
+              << " nuisance parameter values from diagnostic workspace to full workspace.\n";
+}
+
+double HistFitModule::ExpectedEventsForChannel(RooWorkspace& ws, const std::string& channelName) const
+{
+    auto* mc = static_cast<RooStats::ModelConfig*>(ws.obj("ModelConfig"));
+    if (!mc || !mc->GetPdf()) {
+        throw std::runtime_error("[HistFitModule] Cannot evaluate expected events: missing ModelConfig PDF.");
+    }
+
+    auto* simPdf = dynamic_cast<RooSimultaneous*>(mc->GetPdf());
+    RooAbsPdf* channelPdf = simPdf ? simPdf->getPdf(channelName.c_str()) : mc->GetPdf();
+    if (!channelPdf) {
+        throw std::runtime_error("[HistFitModule] Cannot find RooFit channel PDF for " + channelName + ".");
+    }
+
+    RooRealVar* obs = ws.var(("obs_x_" + channelName).c_str());
+    if (!obs) {
+        throw std::runtime_error("[HistFitModule] Cannot find RooFit observable obs_x_"
+                                 + channelName + " for SR prediction summary.");
+    }
+
+    RooArgSet obsSet(*obs);
+    return channelPdf->expectedEvents(&obsSet);
+}
+
+std::vector<double> HistFitModule::ExpectedBinEventsForChannel(
+    RooWorkspace& ws,
+    const std::string& channelName,
+    const TH1D& referenceHist) const
+{
+    auto* mc = static_cast<RooStats::ModelConfig*>(ws.obj("ModelConfig"));
+    if (!mc || !mc->GetPdf()) {
+        throw std::runtime_error("[HistFitModule] Cannot evaluate expected bin events: missing ModelConfig PDF.");
+    }
+
+    auto* simPdf = dynamic_cast<RooSimultaneous*>(mc->GetPdf());
+    RooAbsPdf* channelPdf = simPdf ? simPdf->getPdf(channelName.c_str()) : mc->GetPdf();
+    if (!channelPdf) {
+        throw std::runtime_error("[HistFitModule] Cannot find RooFit channel PDF for " + channelName + ".");
+    }
+
+    RooRealVar* obs = ws.var(("obs_x_" + channelName).c_str());
+    if (!obs) {
+        throw std::runtime_error("[HistFitModule] Cannot find RooFit observable obs_x_"
+                                 + channelName + " for SR bin prediction summary.");
+    }
+
+    RooArgSet obsSet(*obs);
+    const double expectedTotal = channelPdf->expectedEvents(&obsSet);
+    std::vector<double> expectedBins;
+    expectedBins.reserve(referenceHist.GetNbinsX());
+
+    for (int bin = 1; bin <= referenceHist.GetNbinsX(); ++bin) {
+        const double lowEdge = referenceHist.GetBinLowEdge(bin);
+        const double highEdge = lowEdge + referenceHist.GetBinWidth(bin);
+        const std::string rangeName = "histfit_sr_bin_range_" + channelName + "_" + std::to_string(bin);
+        obs->setRange(rangeName.c_str(), lowEdge, highEdge);
+        std::unique_ptr<RooAbsReal> integral{
+            channelPdf->createIntegral(obsSet, RooFit::NormSet(obsSet), RooFit::Range(rangeName.c_str()))};
+        if (!integral) {
+            throw std::runtime_error("[HistFitModule] Failed to create RooFit bin integral for channel "
+                                     + channelName + ", bin " + std::to_string(bin) + ".");
+        }
+        expectedBins.push_back(expectedTotal * integral->getVal());
+    }
+
+    return expectedBins;
+}
+
+const TH1D& HistFitModule::DataHistogramForChannel(const ChannelFitInputs& channel) const
+{
+    for (std::size_t i = 0; i < channel.sampleTypes.size(); ++i) {
+        if (IsDataSample(channel.sampleTypes[i])) {
+            return channel.hists[i];
+        }
+    }
+
+    throw std::runtime_error("[HistFitModule] Cannot find data histogram for channel "
+                             + channel.name + ".");
+}
+
+double HistFitModule::DataEventsForChannel(const ChannelFitInputs& channel) const
+{
+    for (std::size_t i = 0; i < channel.sampleTypes.size(); ++i) {
+        if (!IsDataSample(channel.sampleTypes[i])) {
+            continue;
+        }
+
+        double total = 0.0;
+        for (int bin = 1; bin <= channel.hists[i].GetNbinsX(); ++bin) {
+            total += channel.hists[i].GetBinContent(bin) * channel.sampleWeights[i];
+        }
+        return total;
+    }
+
+    throw std::runtime_error("[HistFitModule] Cannot summarize data for channel "
+                             + channel.name + ": no data sample.");
+}
+
+std::vector<double> HistFitModule::DataBinEventsForChannel(const ChannelFitInputs& channel) const
+{
+    for (std::size_t i = 0; i < channel.sampleTypes.size(); ++i) {
+        if (!IsDataSample(channel.sampleTypes[i])) {
+            continue;
+        }
+
+        std::vector<double> dataBins;
+        dataBins.reserve(channel.hists[i].GetNbinsX());
+        for (int bin = 1; bin <= channel.hists[i].GetNbinsX(); ++bin) {
+            dataBins.push_back(channel.hists[i].GetBinContent(bin) * channel.sampleWeights[i]);
+        }
+        return dataBins;
+    }
+
+    throw std::runtime_error("[HistFitModule] Cannot summarize data bins for channel "
+                             + channel.name + ": no data sample.");
+}
+
+std::vector<double> HistFitModule::DataBinErrorsForChannel(const ChannelFitInputs& channel) const
+{
+    for (std::size_t i = 0; i < channel.sampleTypes.size(); ++i) {
+        if (!IsDataSample(channel.sampleTypes[i])) {
+            continue;
+        }
+
+        std::vector<double> dataErrors;
+        dataErrors.reserve(channel.hists[i].GetNbinsX());
+        for (int bin = 1; bin <= channel.hists[i].GetNbinsX(); ++bin) {
+            dataErrors.push_back(channel.hists[i].GetBinError(bin) * channel.sampleWeights[i]);
+        }
+        return dataErrors;
+    }
+
+    throw std::runtime_error("[HistFitModule] Cannot summarize data bin errors for channel "
+                             + channel.name + ": no data sample.");
+}
+
+std::vector<HistFitModule::SRPredictionSummary>
+HistFitModule::WriteSRConstraintComparison(
+    RooWorkspace& ws,
+    const std::vector<ChannelFitInputs>& channels,
+    const std::string& inputFile) const
+{
+    if (!fWriteSRConstraintComparison) {
+        return {};
+    }
+
+    auto* mc = static_cast<RooStats::ModelConfig*>(ws.obj("ModelConfig"));
+    RooAbsData* data = ws.data("obsData");
+    if (!mc || !mc->GetPdf() || !data) {
+        throw std::runtime_error("[HistFitModule] Cannot run SR constraint comparison: missing PDF or obsData.");
+    }
+
+    auto* poi = dynamic_cast<RooRealVar*>(mc->GetParametersOfInterest()->first());
+    if (!poi) {
+        throw std::runtime_error("[HistFitModule] Cannot run SR constraint comparison: POI is not a RooRealVar.");
+    }
+
+    const double oldPoi = poi->getVal();
+    const bool oldPoiConstant = poi->isConstant();
+    poi->setVal(0.0);
+
+    std::unordered_map<std::string, double> oldNuisanceValues;
+    std::unordered_map<std::string, bool> oldNuisanceConstants;
+    if (mc->GetNuisanceParameters()) {
+        TIterator* it = mc->GetNuisanceParameters()->createIterator();
+        TObject* obj = nullptr;
+        while ((obj = it->Next())) {
+            auto* var = dynamic_cast<RooRealVar*>(obj);
+            if (!var) {
+                continue;
+            }
+            oldNuisanceValues[var->GetName()] = var->getVal();
+            oldNuisanceConstants[var->GetName()] = var->isConstant();
+        }
+        delete it;
+    }
+
+    std::vector<SRPredictionSummary> summaries;
+    for (const ChannelFitInputs& channel : channels) {
+        if (!HasSuffix(channel.name, "_sr")) {
+            continue;
+        }
+        const TH1D& dataHist = DataHistogramForChannel(channel);
+        std::vector<double> binLowEdges;
+        std::vector<double> binHighEdges;
+        binLowEdges.reserve(dataHist.GetNbinsX());
+        binHighEdges.reserve(dataHist.GetNbinsX());
+        for (int bin = 1; bin <= dataHist.GetNbinsX(); ++bin) {
+            const double lowEdge = dataHist.GetBinLowEdge(bin);
+            binLowEdges.push_back(lowEdge);
+            binHighEdges.push_back(lowEdge + dataHist.GetBinWidth(bin));
+        }
+        summaries.push_back({
+            channel.name,
+            ExpectedEventsForChannel(ws, channel.name),
+            0.0,
+            DataEventsForChannel(channel),
+            binLowEdges,
+            binHighEdges,
+            ExpectedBinEventsForChannel(ws, channel.name, dataHist),
+            {},
+            DataBinEventsForChannel(channel),
+            DataBinErrorsForChannel(channel)});
+    }
+
+    if (summaries.empty()) {
+        throw std::runtime_error("[HistFitModule] SR constraint comparison requested but no _sr channels exist.");
+    }
+
+    if (fSRConstraintComparisonFitMode == "cr_only") {
+        std::vector<ChannelFitInputs> crChannels = FilterChannelsBySuffix(channels, "_cr");
+        if (crChannels.empty()) {
+            throw std::runtime_error("[HistFitModule] CR-only SR constraint comparison requested but no _cr channels exist.");
+        }
+
+        std::unique_ptr<RooWorkspace> crWs = BuildModelWorkspace(crChannels, inputFile);
+        auto* crMc = static_cast<RooStats::ModelConfig*>(crWs->obj("ModelConfig"));
+        RooAbsData* crData = crWs->data("obsData");
+        auto* crPoi = crMc
+            ? dynamic_cast<RooRealVar*>(crMc->GetParametersOfInterest()->first())
+            : nullptr;
+        if (!crMc || !crMc->GetPdf() || !crData || !crPoi) {
+            throw std::runtime_error("[HistFitModule] Cannot run CR-only fit for SR constraint comparison.");
+        }
+
+        crPoi->setVal(0.0);
+        crPoi->setConstant(true);
+        std::unique_ptr<RooFitResult> fitResult{
+            crMc->GetPdf()->fitTo(*crData, RooFit::Save(true), RooFit::PrintLevel(-1))};
+        if (!fitResult) {
+            throw std::runtime_error("[HistFitModule] CR-only diagnostic fit did not return a RooFitResult.");
+        }
+        std::cout << "[HistFitModule] CR-only diagnostic fit status: "
+                  << fitResult->status() << ", covQual=" << fitResult->covQual() << ".\n";
+        CopyNuisanceValuesByName(*crWs, ws);
+    } else if (fSRConstraintComparisonFitMode == "simultaneous") {
+        poi->setConstant(true);
+        std::unique_ptr<RooFitResult> fitResult{
+            mc->GetPdf()->fitTo(*data, RooFit::Save(true), RooFit::PrintLevel(-1))};
+        if (!fitResult) {
+            throw std::runtime_error("[HistFitModule] Simultaneous diagnostic fit did not return a RooFitResult.");
+        }
+        std::cout << "[HistFitModule] Simultaneous diagnostic fit status: "
+                  << fitResult->status() << ", covQual=" << fitResult->covQual() << ".\n";
+    } else {
+        throw std::runtime_error("[HistFitModule] Unsupported SR constraint comparison fit mode: "
+                                 + fSRConstraintComparisonFitMode);
+    }
+
+    for (SRPredictionSummary& summary : summaries) {
+        summary.postFitTotal = ExpectedEventsForChannel(ws, summary.channelName);
+        const auto channelIt = std::find_if(
+            channels.begin(),
+            channels.end(),
+            [&summary](const ChannelFitInputs& channel) { return channel.name == summary.channelName; });
+        if (channelIt == channels.end()) {
+            throw std::runtime_error("[HistFitModule] Cannot find SR channel "
+                                     + summary.channelName + " while recording post-fit bins.");
+        }
+        summary.postFitBins = ExpectedBinEventsForChannel(
+            ws,
+            summary.channelName,
+            DataHistogramForChannel(*channelIt));
+    }
+
+    WriteSRConstraintComparisonOutputs(summaries);
+
+    if (mc->GetNuisanceParameters()) {
+        for (const auto& [name, value] : oldNuisanceValues) {
+            auto* var = dynamic_cast<RooRealVar*>(mc->GetNuisanceParameters()->find(name.c_str()));
+            if (!var) {
+                continue;
+            }
+            var->setVal(value);
+            const auto constIt = oldNuisanceConstants.find(name);
+            if (constIt != oldNuisanceConstants.end()) {
+                var->setConstant(constIt->second);
+            }
+        }
+    }
+    poi->setVal(oldPoi);
+    poi->setConstant(oldPoiConstant);
+    return summaries;
+}
+
+void HistFitModule::WriteSRConstraintComparisonOutputs(
+    const std::vector<SRPredictionSummary>& summaries) const
+{
+    std::ofstream csv("histfit_sr_constraint_comparison.csv");
+    if (!csv) {
+        throw std::runtime_error("[HistFitModule] Cannot write histfit_sr_constraint_comparison.csv.");
+    }
+
+    csv << "channel,pre_fit_total,post_fit_total,data_total,post_over_pre\n";
+    for (const SRPredictionSummary& summary : summaries) {
+        const double ratio = summary.preFitTotal != 0.0
+            ? summary.postFitTotal / summary.preFitTotal
+            : 0.0;
+        csv << summary.channelName << ','
+            << summary.preFitTotal << ','
+            << summary.postFitTotal << ','
+            << summary.dataTotal << ','
+            << ratio << '\n';
+
+        TH1D comparison(
+            ("sr_constraint_comparison_" + summary.channelName).c_str(),
+            ("SR constraint comparison " + summary.channelName).c_str(),
+            3,
+            0.5,
+            3.5);
+        comparison.SetDirectory(nullptr);
+        comparison.GetXaxis()->SetBinLabel(1, "pre");
+        comparison.GetXaxis()->SetBinLabel(2, "post");
+        comparison.GetXaxis()->SetBinLabel(3, "data");
+        comparison.GetYaxis()->SetTitle("Expected events");
+        comparison.SetBinContent(1, summary.preFitTotal);
+        comparison.SetBinContent(2, summary.postFitTotal);
+        comparison.SetBinContent(3, summary.dataTotal);
+        comparison.SetFillColor(kAzure - 9);
+        comparison.SetLineColor(kBlue + 2);
+
+        TCanvas canvas(
+            ("c_sr_constraint_comparison_" + summary.channelName).c_str(),
+            ("SR constraint comparison " + summary.channelName).c_str(),
+            800,
+            600);
+        comparison.Draw("hist text0");
+        canvas.SaveAs(("histfit_sr_constraint_comparison_" + summary.channelName + ".png").c_str());
+        canvas.SaveAs(("histfit_sr_constraint_comparison_" + summary.channelName + ".pdf").c_str());
+    }
+
+    std::ofstream binCsv("histfit_sr_constraint_comparison_bins.csv");
+    if (!binCsv) {
+        throw std::runtime_error("[HistFitModule] Cannot write histfit_sr_constraint_comparison_bins.csv.");
+    }
+
+    binCsv << "channel,bin,low_edge,high_edge,pre_fit,post_fit,data,post_over_pre,post_minus_pre\n";
+    for (const SRPredictionSummary& summary : summaries) {
+        const std::size_t nBins = summary.preFitBins.size();
+        if (summary.postFitBins.size() != nBins
+            || summary.dataBins.size() != nBins
+            || summary.dataErrors.size() != nBins
+            || summary.binLowEdges.size() != nBins
+            || summary.binHighEdges.size() != nBins) {
+            throw std::runtime_error("[HistFitModule] Inconsistent SR bin summary vector sizes for channel "
+                                     + summary.channelName + ".");
+        }
+        if (nBins == 0) {
+            throw std::runtime_error("[HistFitModule] Empty SR bin summary for channel "
+                                     + summary.channelName + ".");
+        }
+
+        std::vector<double> edges;
+        edges.reserve(nBins + 1);
+        edges.push_back(summary.binLowEdges.front());
+        for (std::size_t i = 0; i < nBins; ++i) {
+            edges.push_back(summary.binHighEdges[i]);
+        }
+
+        TH1D preHist(
+            ("sr_constraint_pre_" + summary.channelName).c_str(),
+            ("SR constraint comparison " + summary.channelName).c_str(),
+            static_cast<int>(nBins),
+            edges.data());
+        TH1D postHist(
+            ("sr_constraint_post_" + summary.channelName).c_str(),
+            ("SR constraint comparison " + summary.channelName).c_str(),
+            static_cast<int>(nBins),
+            edges.data());
+        TH1D dataHist(
+            ("sr_constraint_data_" + summary.channelName).c_str(),
+            ("SR constraint comparison " + summary.channelName).c_str(),
+            static_cast<int>(nBins),
+            edges.data());
+        TH1D ratioHist(
+            ("sr_constraint_ratio_" + summary.channelName).c_str(),
+            ("SR constraint post/pre " + summary.channelName).c_str(),
+            static_cast<int>(nBins),
+            edges.data());
+        preHist.SetDirectory(nullptr);
+        postHist.SetDirectory(nullptr);
+        dataHist.SetDirectory(nullptr);
+        ratioHist.SetDirectory(nullptr);
+
+        for (std::size_t i = 0; i < nBins; ++i) {
+            const double pre = summary.preFitBins[i];
+            const double post = summary.postFitBins[i];
+            const double data = summary.dataBins[i];
+            const double ratio = pre != 0.0 ? post / pre : 0.0;
+            const double delta = post - pre;
+            const int bin = static_cast<int>(i) + 1;
+
+            binCsv << summary.channelName << ','
+                   << bin << ','
+                   << summary.binLowEdges[i] << ','
+                   << summary.binHighEdges[i] << ','
+                   << pre << ','
+                   << post << ','
+                   << data << ','
+                   << ratio << ','
+                   << delta << '\n';
+
+            preHist.SetBinContent(bin, pre);
+            postHist.SetBinContent(bin, post);
+            dataHist.SetBinContent(bin, data);
+            dataHist.SetBinError(bin, summary.dataErrors[i]);
+            ratioHist.SetBinContent(bin, ratio);
+        }
+
+        preHist.SetLineColor(kBlue + 1);
+        preHist.SetLineWidth(2);
+        preHist.SetFillStyle(0);
+        postHist.SetLineColor(kRed + 1);
+        postHist.SetLineWidth(2);
+        postHist.SetFillStyle(0);
+        dataHist.SetMarkerStyle(20);
+        dataHist.SetMarkerColor(kBlack);
+        dataHist.SetLineColor(kBlack);
+        ratioHist.SetLineColor(kViolet + 1);
+        ratioHist.SetLineWidth(2);
+        ratioHist.SetMarkerStyle(21);
+
+        preHist.GetXaxis()->SetTitle("Logit BDT score");
+        preHist.GetYaxis()->SetTitle("Expected events");
+        ratioHist.GetXaxis()->SetTitle("Logit BDT score");
+        ratioHist.GetYaxis()->SetTitle("Post / pre");
+
+        const double maxY = std::max({
+            preHist.GetMaximum(),
+            postHist.GetMaximum(),
+            dataHist.GetMaximum()});
+        preHist.SetMaximum(maxY > 0.0 ? 1.25 * maxY : 1.0);
+
+        TCanvas canvas(
+            ("c_sr_constraint_bins_" + summary.channelName).c_str(),
+            ("SR constraint bin comparison " + summary.channelName).c_str(),
+            900,
+            800);
+        canvas.Divide(1, 2);
+        canvas.cd(1);
+        preHist.Draw("hist");
+        postHist.Draw("hist same");
+        dataHist.Draw("E1 same");
+        TLegend legend(0.60, 0.70, 0.88, 0.88);
+        legend.AddEntry(&preHist, "pre-fit", "l");
+        legend.AddEntry(&postHist, "post-fit", "l");
+        legend.AddEntry(&dataHist, "data/Asimov", "lep");
+        legend.Draw();
+
+        canvas.cd(2);
+        ratioHist.SetMinimum(0.0);
+        const double ratioMax = ratioHist.GetMaximum();
+        ratioHist.SetMaximum(ratioMax > 0.0 ? std::max(1.5, 1.25 * ratioMax) : 1.5);
+        ratioHist.Draw("hist p");
+        canvas.SaveAs(("histfit_sr_constraint_comparison_" + summary.channelName + "_bins.png").c_str());
+        canvas.SaveAs(("histfit_sr_constraint_comparison_" + summary.channelName + "_bins.pdf").c_str());
+    }
+
+    std::cout << "[HistFitModule] Wrote SR constraint comparison summary for "
+              << summaries.size() << " SR channel(s).\n";
 }
 
 std::vector<HistFitModule::HistoSysVariation>
@@ -1911,6 +2551,18 @@ void HistFitModule::Initialise()
         }
     }
 
+    ReplaceDataWithAsimov(fitChannels);
+    allFitHistsRateScaled.clear();
+    allFitHistNames.clear();
+    allFitSampleWeights.clear();
+    for (const ChannelFitInputs& channel : fitChannels) {
+        for (std::size_t i = 0; i < channel.hists.size(); ++i) {
+            allFitHistsRateScaled.push_back(channel.hists[i]);
+            allFitHistNames.push_back(channel.histNames[i]);
+            allFitSampleWeights.push_back(channel.sampleWeights[i]);
+        }
+    }
+
     if (allFitHistsRateScaled.empty()) {
         throw std::runtime_error("[HistFitModule] No fit histograms were created.");
     }
@@ -1929,6 +2581,8 @@ void HistFitModule::Initialise()
     std::unique_ptr<RooWorkspace> ws = BuildModelWorkspace(
         fitChannels,
         "bdt_score_histograms_tmp_4.root");
+
+    WriteSRConstraintComparison(*ws, fitChannels, "bdt_score_histograms_tmp_4.root");
 
     std::cout << "HypoTestInverter starting..." << std::endl;
 
