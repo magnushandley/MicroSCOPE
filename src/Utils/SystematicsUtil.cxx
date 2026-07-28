@@ -9,8 +9,10 @@
 #include <sstream>
 #include <TH2D.h>
 #include <TCanvas.h>
+#include <TGraphErrors.h>
 #include "ROOT/RVec.hxx"
 #include <TLegend.h>
+#include <TLine.h>
 #include <stdexcept>
 #include <string>
 
@@ -130,6 +132,105 @@ namespace Analysis
             const std::string outBase = "debug_scaled_detvar_cv_vs_variations_" + safeName;
             c.SaveAs(Form("%s.pdf", outBase.c_str()));
             c.SaveAs(Form("%s.png", outBase.c_str()));
+
+            const std::vector<int> markerStyles = {
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                33
+            };
+
+            for (std::size_t i = 0; i < scaledVariations.size(); ++i) {
+                TGraphErrors graph;
+                graph.SetName(Form("%s_ratio_to_cv_%zu", nominalHist.GetName(), i));
+                graph.SetTitle(
+                    Form("%s / CV: %s;%s;Detector variation / CV",
+                         detVarHists[i].GetTitle(),
+                         nominalHist.GetName(),
+                         nominalHist.GetXaxis()->GetTitle()));
+                graph.SetLineColor(colors[i % colors.size()]);
+                graph.SetMarkerColor(colors[i % colors.size()]);
+                graph.SetMarkerStyle(markerStyles[i % markerStyles.size()]);
+                graph.SetMarkerSize(0.9);
+
+                double minRatio = std::numeric_limits<double>::max();
+                double maxRatio = -std::numeric_limits<double>::max();
+                const TH1D& hist = scaledVariations[i];
+                for (int bin = 1; bin <= scaledNominal.GetNbinsX(); ++bin) {
+                    const double nominal = scaledNominal.GetBinContent(bin);
+                    const double detVar = hist.GetBinContent(bin);
+                    if (nominal == 0.0 || detVar == 0.0) {
+                        continue;
+                    }
+
+                    const double nominalErr = scaledNominal.GetBinError(bin);
+                    const double detVarErr = hist.GetBinError(bin);
+                    const double ratio = detVar / nominal;
+                    const double ratioErr = ratio * std::sqrt(
+                        std::pow(detVarErr / detVar, 2) +
+                        std::pow(nominalErr / nominal, 2));
+
+                    const int point = graph.GetN();
+                    graph.SetPoint(point, scaledNominal.GetBinCenter(bin), ratio);
+                    graph.SetPointError(point, 0.0, ratioErr);
+
+                    minRatio = std::min(minRatio, ratio - ratioErr);
+                    maxRatio = std::max(maxRatio, ratio + ratioErr);
+                }
+
+                if (graph.GetN() == 0) {
+                    continue;
+                }
+
+                const double ratioYMin = std::min(0.8, minRatio - 0.1 * std::abs(minRatio));
+                const double ratioYMax = std::max(1.2, maxRatio + 0.1 * std::abs(maxRatio));
+                graph.SetMinimum(ratioYMin);
+                graph.SetMaximum(ratioYMax);
+
+                const std::string variationSafeName = MakeFileSafeStem(
+                    detVarHists[i].GetTitle()[0] != '\0' ? detVarHists[i].GetTitle() : detVarHists[i].GetName());
+                TCanvas ratioCanvas(
+                    Form("c_scaled_detvar_ratio_to_cv_%s_%zu_%s",
+                         safeName.c_str(),
+                         i,
+                         variationSafeName.c_str()),
+                    "Scaled detector variation ratio to CV",
+                    1000,
+                    750);
+                graph.Draw("AP");
+
+                TLine unityLine(
+                    scaledNominal.GetXaxis()->GetXmin(),
+                    1.0,
+                    scaledNominal.GetXaxis()->GetXmax(),
+                    1.0);
+                unityLine.SetLineColor(kBlack);
+                unityLine.SetLineStyle(2);
+                unityLine.SetLineWidth(2);
+                unityLine.Draw("SAME");
+                graph.Draw("P SAME");
+
+                TLegend ratioLeg(0.58, 0.78, 0.90, 0.90);
+                ratioLeg.SetBorderSize(0);
+                ratioLeg.SetFillStyle(0);
+                ratioLeg.AddEntry(&graph, detVarHists[i].GetTitle(), "p");
+                ratioLeg.Draw();
+
+                const std::string ratioOutBase = "debug_scaled_detvar_ratio_to_cv_"
+                    + safeName
+                    + "_"
+                    + std::to_string(i)
+                    + "_"
+                    + variationSafeName;
+                ratioCanvas.SaveAs(Form("%s.pdf", ratioOutBase.c_str()));
+                ratioCanvas.SaveAs(Form("%s.png", ratioOutBase.c_str()));
+            }
 
             if (minPositive < std::numeric_limits<double>::max()) {
                 c.SetLogy();
