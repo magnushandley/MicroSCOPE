@@ -137,22 +137,24 @@ void SlimmerModule::Initialise()
 
         // Special handling for timing variables
         // Ext files have garbage times, so just add a random time within the spill window
-        if (fSampleLabels[fileIndex].find("beamoff") != std::string::npos) {
-            std::cout << "[Slimmer] Adding random timing offsets for beam-off file.\n";
-            dfOut = df1.Define(
-                "interaction_time_merged",
-                [beamSpillPeriod](float) {
-                    const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
-                    //std::cout << "[Slimmer] Assigned random timing offset for beam-off event: " << random_offset << " ns\n";
-                    return random_offset;
-                },
-                {"interaction_time_abs"}
-            )
-            .Redefine("Med_TT3", []() {
-                return 99999.0f;   // arbitrary placeholder
-            });
-        }
-        else if (fSampleLabels[fileIndex].find("data") != std::string::npos || fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
+        //if (fSampleLabels[fileIndex].find("beamoff") != std::string::npos) {
+        //    std::cout << "[Slimmer] Adding random timing offsets for beam-off file.\n";
+        //    dfOut = df1.Define(
+        //        "interaction_time_merged",
+        //        [beamSpillPeriod](float) {
+        //            const double random_offset = gRandom->Uniform(0.0, beamSpillPeriod);
+        //            //std::cout << "[Slimmer] Assigned random timing offset for beam-off event: " << random_offset << " ns\n";
+        //            return random_offset;
+        //        },
+        //        {"interaction_time_abs"}
+        //    )
+        //    .Redefine("Med_TT3", []() {
+        //        return 99999.0f;   // arbitrary placeholder
+        //    });
+        //}
+
+        //If not ext file, apply offsets.
+        if (fSampleLabels[fileIndex].find("beamoff") == std::string::npos && fSampleLabels[fileIndex].find("signal") == std::string::npos) {
             std::cout << "[Slimmer] Fitting timing offsets for data file.\n";
             auto run_numbers = df1.Take<int>("run").GetValue();
             auto times_f     = df1.Take<float>("interaction_time_abs").GetValue();
@@ -247,7 +249,7 @@ void SlimmerModule::Initialise()
 
         //Adding info required for systematics
 
-        if (fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos) {
+        if (fSampleLabels[fileIndex].find("overlay") != std::string::npos || fSampleLabels[fileIndex].find("dirt") != std::string::npos || fSampleLabels[fileIndex].find("detvar") != std::string::npos || fSampleLabels[fileIndex].find("signal") != std::string::npos) {
             dfOut = dfOut.Define("weight_cv",
                 [](float w1, float w2, int npi0) {
                     float safeWeight1 = (w1 > 0.0f && !std::isnan(w1) && !std::isinf(w1) && w1 < 100) ? w1 : 1.0f;
@@ -285,6 +287,50 @@ void SlimmerModule::Initialise()
         }
         else {
             dfOut = dfOut.Define("weight_cv",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weight_cv_untuned",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weight_cv_nosplineortune",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weight_cv_noppfx",
+                []() {
+                    return 1.0f;
+                })
+                .Define("ppfx_cv",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightsFlux",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightsGenie",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightsReint",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightsPPFX",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightSplineTimesTune",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightSpline",
+                []() {
+                    return 1.0f;
+                })
+                .Define("weightTune",
                 []() {
                     return 1.0f;
                 });
