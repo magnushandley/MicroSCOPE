@@ -43,6 +43,17 @@ static auto value_at_max_index_float_int = [](auto df, const LogicConfig& cfg) {
     );
 };
 
+static auto value_at_max_index_int_int = [](auto df, const LogicConfig& cfg) {
+    return df.Define(cfg.output,
+        [](const std::vector<int>& var, const std::vector<int>& E) {
+            if (var.empty() || E.empty()) return -9999;
+            int idx = std::distance(E.begin(), std::max_element(E.begin(), E.end()));
+            return var[idx];
+        },
+        cfg.inputs
+    );
+};
+
 static auto min_of_two_vectors_or_default_float = [](auto df, const LogicConfig& cfg) {
     float sentinel = -9999.0f;
     return df.Define(cfg.output,
@@ -99,6 +110,7 @@ bool registered = [](){
     reg.Register("first_or_default_float", first_or_default_float);
     reg.Register("sum_int_vector", sum_int_vector);
     reg.Register("value_at_max_index_float_int", value_at_max_index_float_int);
+    reg.Register("value_at_max_index_int_int", value_at_max_index_int_int);
     reg.Register("min_of_two_vectors_or_default_float", min_of_two_vectors_or_default_float);
     reg.Register("max_of_two_vectors_or_default_float", max_of_two_vectors_or_default_float);
     reg.Register("filter_expression", filter_expression);
