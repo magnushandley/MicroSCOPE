@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <TH1.h>
 #include <TH1D.h>
 #include <THStack.h>
@@ -73,7 +74,9 @@ public:
                     double ratioYMin = 0.5,
                     double ratioYMax = 1.5,
                     const TH1D* bkgSysVarHist = nullptr,
-                    const std::string& MicroBooNELabel = "NuMI 2.6e20 POT");
+                    const std::string& MicroBooNELabel = "NuMI 2.6e20 POT",
+                    std::optional<double> showLowerCut = std::nullopt,
+                    std::optional<double> showUpperCut = std::nullopt);
 
     static void FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     const std::vector<std::string>& labels,
@@ -84,7 +87,9 @@ public:
                     double ratioYMin = 0.5,
                     double ratioYMax = 1.5,
                     const TH1D* bkgSysVarHist = nullptr,
-                    const std::string& MicroBooNELabel = "NuMI 2.6e20 POT");
+                    const std::string& MicroBooNELabel = "NuMI 2.6e20 POT",
+                    std::optional<double> showLowerCut = std::nullopt,
+                    std::optional<double> showUpperCut = std::nullopt);
 
     static void BlindedMCSignalPlot(std::vector<TH1D>& rawHists,
                           const std::vector<std::string>& labels,

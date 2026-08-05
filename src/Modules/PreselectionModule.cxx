@@ -509,7 +509,10 @@ void PreselectionModule::Initialise()
                 plotSampleWeights,
                 0.5,
                 1.5,
-                &totalVarianceHist);
+                &totalVarianceHist,
+                "NuMI 2.6e20 POT",
+                plot.config.showLowerCut,
+                plot.config.showUpperCut);
         }
     };
 

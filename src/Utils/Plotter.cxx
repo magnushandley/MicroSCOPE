@@ -11,11 +11,13 @@
 #include <TSystem.h>
 #include <iostream>
 #include <TLine.h>
+#include <TArrow.h>
 #include <TLatex.h>
 #include <ROOT/RDataFrame.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <optional>
 
 using namespace Analysis;
 
@@ -204,7 +206,9 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     double ratioYMin,
                     double ratioYMax,
                     const TH1D* bkgSysVarHist,
-                    const std::string& MicroBooNELabel)
+                    const std::string& MicroBooNELabel,
+                    std::optional<double> showLowerCut,
+                    std::optional<double> showUpperCut)
 {
     std::vector<SampleType> sampleTypes;
     sampleTypes.reserve(labels.size());
@@ -222,7 +226,9 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
         ratioYMin,
         ratioYMax,
         bkgSysVarHist,
-        MicroBooNELabel);
+        MicroBooNELabel,
+        showLowerCut,
+        showUpperCut);
 }
 
 void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
@@ -234,7 +240,9 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
                     double ratioYMin,
                     double ratioYMax,
                     const TH1D* bkgSysVarHist,
-                    const std::string& MicroBooNELabel)
+                    const std::string& MicroBooNELabel,
+                    std::optional<double> showLowerCut,
+                    std::optional<double> showUpperCut)
 {
     std::cout << "[Plotter] Creating full stacked histogram: " << basename << std::endl;
     static const Int_t colours[] = {
@@ -282,6 +290,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     gPad->SetPad(0.0, ratioPaneFraction, 1.0, 1.0);
     gPad->SetBottomMargin(0.1);
     gPad->SetLeftMargin(0.15);
+    if (logy) gPad->SetLogy();
 
     for (size_t i = 0; i < hists.size(); ++i) {
         auto& hist = hists[i];
@@ -402,6 +411,62 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     hs->GetXaxis()->SetLabelSize(topAxisTextSize);
     hs->GetYaxis()->SetTitleSize(topAxisTextSize);
     hs->GetYaxis()->SetLabelSize(topAxisTextSize);
+
+    // Draw cut markers only on the main histogram pad. DrawClone transfers
+    // ownership of each displayed primitive to ROOT's pad.
+    if (showLowerCut || showUpperCut) {
+        if (!(yMax > 0.0) || !std::isfinite(yMax)) {
+            std::cerr << "[Plotter] FullDataMCSignalPlot: plot " << basename
+                      << " has no positive finite height - skipping cut markers."
+                      << std::endl;
+        } else {
+            gPad->Modified();
+            gPad->Update();
+
+            double markerYMin = 0.0;
+            double markerYMid = 0.5 * yMax;
+            if (logy) {
+                markerYMin = std::pow(10.0, gPad->GetUymin());
+                if (!(markerYMin > 0.0) || !std::isfinite(markerYMin)
+                    || markerYMin >= yMax) {
+                    markerYMin = yMax * 1.0e-3;
+                }
+                markerYMid = std::sqrt(markerYMin * yMax);
+            }
+
+            const double xMin = hists[0].GetXaxis()->GetXmin();
+            const double xMax = hists[0].GetXaxis()->GetXmax();
+            const double arrowLength = 0.1 * (xMax - xMin);
+
+            const auto drawCutMarker = [&](double cutPosition, bool pointsRight) {
+                TLine cutLine(cutPosition, markerYMin, cutPosition, yMax);
+                cutLine.SetLineColor(kBlack);
+                cutLine.SetLineStyle(2);
+                cutLine.SetLineWidth(4);
+                cutLine.DrawClone("SAME");
+
+                const double arrowEnd = pointsRight
+                    ? std::min(xMax, cutPosition + arrowLength)
+                    : std::max(xMin, cutPosition - arrowLength);
+                if (arrowEnd != cutPosition) {
+                    TArrow arrow(cutPosition, markerYMid, arrowEnd, markerYMid,
+                                 0.02, "|>");
+                    arrow.SetLineColor(kBlack);
+                    arrow.SetFillColor(kBlack);
+                    arrow.SetFillStyle(1001);
+                    arrow.SetAngle(40.0);
+                    arrow.SetLineStyle(1);
+                    arrow.SetLineWidth(3);
+                    // TArrow interprets its Draw option as the arrow shape.
+                    // Passing "SAME" here would replace "|>" and remove the head.
+                    arrow.DrawClone();
+                }
+            };
+
+            if (showLowerCut) drawCutMarker(*showLowerCut, true);
+            if (showUpperCut) drawCutMarker(*showUpperCut, false);
+        }
+    }
 
     // Legend
     constexpr double legendRight = 0.88;

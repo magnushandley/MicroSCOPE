@@ -5,6 +5,8 @@
 #include <TEnv.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -25,6 +27,8 @@ struct PlotConfig {
     std::string valueMode = "direct";
     std::string weightColumn;
     bool        enableSystematics = true;
+    std::optional<double> showLowerCut;
+    std::optional<double> showUpperCut;
 };
 
 enum class SampleType {
@@ -197,6 +201,26 @@ inline std::vector<PlotConfig> ParsePlotConfigs(const TEnv& cfg, const std::stri
         plot.weightColumn = cfg.GetValue((base + ".WeightColumn").c_str(), "");
         plot.enableSystematics = cfg.GetValue((base + ".EnableSystematics").c_str(), true);
 
+        const auto parseOptionalCut = [&](const std::string& setting) -> std::optional<double> {
+            const std::string key = base + "." + setting;
+            if (!ConfigHasKey(cfg, key)) {
+                return std::nullopt;
+            }
+
+            const std::string rawValue = RequireConfigValue(cfg, key);
+            std::stringstream valueStream(rawValue);
+            double value = 0.0;
+            std::string trailing;
+            if (!(valueStream >> value) || (valueStream >> trailing) || !std::isfinite(value)) {
+                throw std::runtime_error("[Config] Invalid numeric value for " + key
+                                         + ": " + rawValue);
+            }
+            return value;
+        };
+
+        plot.showLowerCut = parseOptionalCut("ShowLowerCut");
+        plot.showUpperCut = parseOptionalCut("ShowUpperCut");
+
         plot.valueMode = cfg.GetValue((base + ".ValueMode").c_str(), "direct");
         std::transform(plot.valueMode.begin(), plot.valueMode.end(), plot.valueMode.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -214,6 +238,22 @@ inline std::vector<PlotConfig> ParsePlotConfigs(const TEnv& cfg, const std::stri
         if (!(plot.xMax > plot.xMin)) {
             throw std::runtime_error("[Config] Invalid range for " + base
                                      + ": XMax must be greater than XMin");
+        }
+
+        const auto validateCutRange = [&](const std::optional<double>& cut,
+                                          const std::string& setting) {
+            if (cut && (*cut < plot.xMin || *cut > plot.xMax)) {
+                throw std::runtime_error("[Config] Invalid " + base + "." + setting
+                                         + ": cut position must be within [XMin, XMax]");
+            }
+        };
+        validateCutRange(plot.showLowerCut, "ShowLowerCut");
+        validateCutRange(plot.showUpperCut, "ShowUpperCut");
+
+        if (plot.showLowerCut && plot.showUpperCut
+            && *plot.showLowerCut > *plot.showUpperCut) {
+            throw std::runtime_error("[Config] Invalid cut range for " + base
+                                     + ": ShowLowerCut must not exceed ShowUpperCut");
         }
 
         out.push_back(std::move(plot));
