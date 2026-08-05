@@ -27,6 +27,7 @@ struct PlotConfig {
     std::string valueMode = "direct";
     std::string weightColumn;
     bool        enableSystematics = true;
+    std::string microBooNELabel = "NuMI 2.6e20 POT";
     std::optional<double> showLowerCut;
     std::optional<double> showUpperCut;
 };
@@ -200,6 +201,8 @@ inline std::vector<PlotConfig> ParsePlotConfigs(const TEnv& cfg, const std::stri
         plot.logY = cfg.GetValue((base + ".LogY").c_str(), false);
         plot.weightColumn = cfg.GetValue((base + ".WeightColumn").c_str(), "");
         plot.enableSystematics = cfg.GetValue((base + ".EnableSystematics").c_str(), true);
+        plot.microBooNELabel = cfg.GetValue((base + ".MicroBooNELabel").c_str(),
+                                            plot.microBooNELabel.c_str());
 
         const auto parseOptionalCut = [&](const std::string& setting) -> std::optional<double> {
             const std::string key = base + "." + setting;

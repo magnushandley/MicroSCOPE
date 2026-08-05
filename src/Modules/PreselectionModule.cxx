@@ -510,7 +510,7 @@ void PreselectionModule::Initialise()
                 0.5,
                 1.5,
                 &totalVarianceHist,
-                "NuMI 2.6e20 POT",
+                plot.config.microBooNELabel,
                 plot.config.showLowerCut,
                 plot.config.showUpperCut);
         }
