@@ -363,7 +363,7 @@ void PreselectionModule::Initialise()
 
                 for (int bin = 1; bin <= dirtVar.GetNbinsX(); ++bin) {
                     const double content = nominalHist.GetBinContent(bin);
-                    const double variance = (0.75 * content) * (0.75 * content);
+                    const double variance = (1.0 * content) * (1.0 * content); //100% dirt normalization uncertainty
                     dirtVar.SetBinContent(bin, variance);
                     dirtVar.SetBinError(bin, 0.0);
                 }
