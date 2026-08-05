@@ -20,9 +20,11 @@
 using namespace Analysis;
 
 // ----------------------------------------------------------------------//
-std::unique_ptr<TCanvas> Plotter::MakeCanvas(const std::string& title)
+std::unique_ptr<TCanvas> Plotter::MakeCanvas(const std::string& title,
+                                             int width,
+                                             int height)
 {
-    auto c = std::make_unique<TCanvas>(title.c_str(), title.c_str(), 800, 600);
+    auto c = std::make_unique<TCanvas>(title.c_str(), title.c_str(), width, height);
     c->SetTicks(1, 1);
     c->SetMargin(0.12, 0.02, 0.12, 0.08);
     return c;
@@ -252,7 +254,18 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     }
 
     ApplyStyle("prelim");
-    auto c = MakeCanvas(basename);
+
+    constexpr int canvasWidth = 800;
+    constexpr int ratioPaneHeight = 180;
+    constexpr int originalTopPaneHeight = 420;
+    constexpr int topPaneHeight = originalTopPaneHeight * 3 / 2;
+    constexpr int canvasHeight = topPaneHeight + ratioPaneHeight;
+    constexpr double ratioPaneFraction =
+        static_cast<double>(ratioPaneHeight) / canvasHeight;
+    constexpr double ratioAxisTextSize = 0.12;
+    constexpr double topAxisTextSize = ratioAxisTextSize * ratioPaneHeight / topPaneHeight;
+
+    auto c = MakeCanvas(basename, canvasWidth, canvasHeight);
     if (logy) c->SetLogy();
 
     THStack *hs = new THStack("hs", ("Stacked Histogram: " + basename).c_str());
@@ -266,7 +279,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     // ---- Top pad
     c->cd(1);
     gPad->UseCurrentStyle();
-    gPad->SetPad(0.0, 0.3, 1.0, 1.0);
+    gPad->SetPad(0.0, ratioPaneFraction, 1.0, 1.0);
     gPad->SetBottomMargin(0.1);
     gPad->SetLeftMargin(0.15);
 
@@ -364,7 +377,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
             yBandMax = std::max(yBandMax, hBkgTotal->GetBinContent(b) + hBkgTotal->GetBinError(b));
         yMax = std::max(yMax, yBandMax);
     }
-    hs->SetMaximum(1.2 * yMax);
+    hs->SetMaximum(1.5 * yMax);
 
     // Background stat band
     if (hBkgTotal) {
@@ -385,9 +398,16 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
 
     hs->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
     hs->GetYaxis()->SetTitle(hists[0].GetYaxis()->GetTitle());
+    hs->GetXaxis()->SetTitleSize(topAxisTextSize);
+    hs->GetXaxis()->SetLabelSize(topAxisTextSize);
+    hs->GetYaxis()->SetTitleSize(topAxisTextSize);
+    hs->GetYaxis()->SetLabelSize(topAxisTextSize);
 
     // Legend
-    auto leg = new TLegend(0.7, 0.7, 0.88, 0.88);
+    constexpr double legendRight = 0.88;
+    constexpr double originalLegendWidth = 0.18;
+    constexpr double legendWidth = originalLegendWidth * 1.3;
+    auto leg = new TLegend(legendRight - legendWidth, 0.7, legendRight, 0.88);
     for (size_t i = 0; i < hists.size(); ++i) {
         const bool isSignal = IsSignalSample(sampleTypes[i]);
         const bool isData   = IsDataSample(sampleTypes[i]);
@@ -415,22 +435,23 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     // Helper to style ratio axes once (no more duplication)
     auto styleRatioAxes = [&](TH1D* h) {
         h->GetYaxis()->SetRangeUser(ratioYMin, ratioYMax);
+        h->GetYaxis()->SetNdivisions(505);
         h->GetYaxis()->SetTitle("Data / MC");
         h->GetYaxis()->SetLabelOffset(0.0);
         h->GetYaxis()->SetTitleOffset(0.5);
 
         h->GetXaxis()->SetTitle(hists[0].GetXaxis()->GetTitle());
-        h->GetXaxis()->SetTitleSize(0.08);
-        h->GetXaxis()->SetLabelSize(0.08);
+        h->GetXaxis()->SetTitleSize(ratioAxisTextSize);
+        h->GetXaxis()->SetLabelSize(ratioAxisTextSize);
 
-        h->GetYaxis()->SetTitleSize(0.08);
-        h->GetYaxis()->SetLabelSize(0.08);
+        h->GetYaxis()->SetTitleSize(ratioAxisTextSize);
+        h->GetYaxis()->SetLabelSize(ratioAxisTextSize);
     };
 
     // ---- Bottom pad: ratio
     c->cd(2);
     gPad->UseCurrentStyle();
-    gPad->SetPad(0.0, 0.0, 1.0, 0.3);
+    gPad->SetPad(0.0, 0.0, 1.0, ratioPaneFraction);
     gPad->SetTopMargin(0.05);
     gPad->SetBottomMargin(0.3);
     gPad->SetLeftMargin(0.15);

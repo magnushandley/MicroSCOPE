@@ -99,7 +99,9 @@ private:
     ~Plotter() = default;
 
     // ----  internal helpers --------------------------------------
-    static std::unique_ptr<TCanvas> MakeCanvas(const std::string& title);
+    static std::unique_ptr<TCanvas> MakeCanvas(const std::string& title,
+                                               int width = 800,
+                                               int height = 600);
     static void ApplyStyle(const std::string& style);
 };
 
