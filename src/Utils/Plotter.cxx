@@ -276,7 +276,7 @@ void Plotter::FullDataMCSignalPlot(std::vector<TH1D>& hists,
     auto c = MakeCanvas(basename, canvasWidth, canvasHeight);
     if (logy) c->SetLogy();
 
-    THStack *hs = new THStack("hs", ("Stacked Histogram: " + basename).c_str());
+    THStack *hs = new THStack("hs", "");
 
     std::vector<TH1D*> signalHists;
     std::vector<TH1D*> dataHists;
