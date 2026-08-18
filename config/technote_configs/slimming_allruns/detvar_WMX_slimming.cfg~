@@ -1,0 +1,113 @@
+##############################################################
+#  Module-specific settings
+##############################################################
+Slimmer.InputFiles /pnfs/uboone/persistent/users/uboonepro/surprise/detvar/NuMI/run2_RHC/merge_det_DetVar_Run123_v10_04_07_24_NuMI_RHC_nu_overlay_WMX_surprise_reco2_hist_2.root /pnfs/uboone/persistent/users/uboonepro/surprise/detvar/NuMI/run3_RHC/merge_det_DetVar_Run123_v10_04_07_24_NuMI_RHC_nu_overlay_WMX_surprise_reco2_hist_3.root /pnfs/uboone/persistent/users/uboonepro/surprise/detvar/NuMI/run4_RHC/merge_det_DetVar_Run45_v10_04_07_19_NuMI_RHC_nu_overlay_WMX_surprise_reco2_hist.root /pnfs/uboone/persistent/users/uboonepro/surprise/detvar/NuMI/run4_FHC/merge_det_DetVar_Run45_v10_04_07_19_NuMI_FHC_nu_overlay_WMX_surprise_reco2_hist.root /pnfs/uboone/persistent/users/uboonepro/surprise/detvar/NuMI/run5_FHC/merge_det_DetVar_Run45_v10_04_07_19_NuMI_FHC_nu_overlay_WMX_surprise_reco2_hist_5.root 
+Slimmer.OutputFiles /exp/uboone/data/users/mhandley/surprise_samples/aug_26_technote_files/slimmed/detvar/detvar_WMX/run2_RHC_detvar_WMX_slimmed.root /exp/uboone/data/users/mhandley/surprise_samples/aug_26_technote_files/slimmed/detvar/detvar_WMX/run3_RHC_detvar_WMX_slimmed.root /exp/uboone/data/users/mhandley/surprise_samples/aug_26_technote_files/slimmed/detvar/detvar_WMX/run4_RHC_detvar_WMX_slimmed.root /exp/uboone/data/users/mhandley/surprise_samples/aug_26_technote_files/slimmed/detvar/detvar_WMX/run4_FHC_detvar_WMX_slimmed.root /exp/uboone/data/users/mhandley/surprise_samples/aug_26_technote_files/slimmed/detvar/detvar_WMX/run5_FHC_detvar_WMX_slimmed.root
+
+Slimmer.TreeName nuselection/NeutrinoSelectionFilter
+Slimmer.SampleLabels run2_RHC_detvar_WMX run3_RHC_detvar_WMX run4_RHC_detvar_WMX run4_FHC_detvar_WMX run5_FHC_detvar_WMX
+Slimmer.MakePlots False
+
+# Branches to keep after slimming; derived variables can be listed too
+Slimmer.Keep run sub evt nslice n_pfps n_tracks n_showers trk_sce_start_x_v trk_sce_start_y_v trk_sce_start_z_v trk_sce_end_x_v trk_sce_end_y_v trk_sce_end_z_v shr_theta_v shr_phi_v shr_px_v shr_py_v shr_pz_v shrclusdir0 shrclusdir1 shrclusdir2 shr_energy_tot trk_theta_v trk_phi_v trk_dir_x_v trk_dir_y_v trk_dir_z_v trk_energy trk_energy_hits_tot trk_energy_tot trk_score_v trk_calo_energy_u_v trk_end_x_v pfnplanehits_U pfnplanehits_V pfnplanehits_Y NeutrinoEnergy2 SliceCaloEnergy2 nu_flashmatch_score contained_sps_ratio flash_time_flash_matching contained_fraction trk_score crtveto swtrig topological_score shr_tkfit_dedx_max trk_chipr_best min_x min_y min_z max_x max_y max_z trk_score_v_maxE shr_theta_v_maxE shr_px_v_maxE trk_end_x_v_maxE shr_phi_v_maxE shr_pz_v_maxE trk_theta_v_maxE trk_phi_v_maxE trk_dir_z_v_maxE trk_calo_energy_u_v_maxE slice_orig_pass_id n_showers_contained_MCStool pfng2shravrg pfng2shravrg_maxE par_decay_vx par_decay_vy par_decay_vz par_decay_px par_decay_py par_decay_pz slcng2shr slcng2mip slcng2hip slcng2bkg pfng2mipfrac pfng2hipfrac pfng2bkgfrac pfng2mipfrac_maxE pfng2hipfrac_maxE pfng2bkgfrac_maxE pfnplanehits_U_maxE pfnplanehits_V_maxE pfnplanehits_Y_maxE interaction_time_merged interaction_time_abs pi0_mass_Y Med_TT3 flash_z_flash_matching true_nu_vtx_t weight_cv weight_cv_nosplineortune weight_cv_untuned weight_cv_noppfx ppfx_cv npi0 weightsFlux weightsGenie weightsReint weightsPPFX weightSplineTimesTune weightSpline weightTune shrmoliereavg subcluster CosmicIPAll3D CosmicDirAll3D shrMCSMom DeltaRMS2h shrPCA1CMed_5cm CylFrac2h_1cm shr_tkfit_2cm_dedx_Y shr_tkfit_2cm_dedx_U shr_tkfit_2cm_dedx_V shr_tkfit_gap10_dedx_Y shr_tkfit_gap10_dedx_U shr_tkfit_gap10_dedx_V secondshower_U_nhit secondshower_U_vtxdist secondshower_U_dot secondshower_U_dir anglediff_U secondshower_V_nhit secondshower_V_vtxdist secondshower_V_dot secondshower_V_dir anglediff_V secondshower_Y_nhit secondshower_Y_vtxdist secondshower_Y_dot secondshower_Y_dir anglediff_Y nhits_r1cm nhits_r3cm nhits_r5cm nhits_r10cm
+Slimmer.Operations min_x max_x min_y max_y min_z max_z trk_score_v_maxE shr_theta_v_maxE shr_px_v_maxE trk_end_x_v_maxE shr_phi_v_maxE shr_pz_v_maxE trk_theta_v_maxE trk_phi_v_maxE trk_dir_z_v_maxE trk_calo_energy_u_v_maxE pfng2shravrg_maxE pfng2mipfrac_maxE pfng2hipfrac_maxE pfng2bkgfrac_maxE pfnplanehits_U_maxE pfnplanehits_V_maxE pfnplanehits_Y_maxE
+
+Slimmer.Operation.min_x.Type min_of_two_vectors_or_default_float
+Slimmer.Operation.min_x.Output min_x
+Slimmer.Operation.min_x.Inputs trk_sce_start_x_v trk_sce_end_x_v
+
+Slimmer.Operation.max_x.Type max_of_two_vectors_or_default_float
+Slimmer.Operation.max_x.Output max_x
+Slimmer.Operation.max_x.Inputs trk_sce_start_x_v trk_sce_end_x_v
+
+Slimmer.Operation.min_y.Type min_of_two_vectors_or_default_float
+Slimmer.Operation.min_y.Output min_y
+Slimmer.Operation.min_y.Inputs trk_sce_start_y_v trk_sce_end_y_v
+
+Slimmer.Operation.max_y.Type max_of_two_vectors_or_default_float
+Slimmer.Operation.max_y.Output max_y
+Slimmer.Operation.max_y.Inputs trk_sce_start_y_v trk_sce_end_y_v
+
+Slimmer.Operation.min_z.Type min_of_two_vectors_or_default_float
+Slimmer.Operation.min_z.Output min_z
+Slimmer.Operation.min_z.Inputs trk_sce_start_z_v trk_sce_end_z_v
+
+Slimmer.Operation.max_z.Type max_of_two_vectors_or_default_float
+Slimmer.Operation.max_z.Output max_z
+Slimmer.Operation.max_z.Inputs trk_sce_start_z_v trk_sce_end_z_v
+
+Slimmer.Operation.trk_score_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_score_v_maxE.Output trk_score_v_maxE
+Slimmer.Operation.trk_score_v_maxE.Inputs trk_score_v pfnplanehits_Y
+
+Slimmer.Operation.shr_theta_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.shr_theta_v_maxE.Output shr_theta_v_maxE
+Slimmer.Operation.shr_theta_v_maxE.Inputs shr_theta_v pfnplanehits_Y
+
+Slimmer.Operation.shr_px_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.shr_px_v_maxE.Output shr_px_v_maxE
+Slimmer.Operation.shr_px_v_maxE.Inputs shr_px_v pfnplanehits_Y
+
+Slimmer.Operation.trk_end_x_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_end_x_v_maxE.Output trk_end_x_v_maxE
+Slimmer.Operation.trk_end_x_v_maxE.Inputs trk_end_x_v pfnplanehits_Y
+
+Slimmer.Operation.shr_phi_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.shr_phi_v_maxE.Output shr_phi_v_maxE
+Slimmer.Operation.shr_phi_v_maxE.Inputs shr_phi_v pfnplanehits_Y
+
+Slimmer.Operation.shr_pz_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.shr_pz_v_maxE.Output shr_pz_v_maxE
+Slimmer.Operation.shr_pz_v_maxE.Inputs shr_pz_v pfnplanehits_Y
+
+Slimmer.Operation.trk_theta_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_theta_v_maxE.Output trk_theta_v_maxE
+Slimmer.Operation.trk_theta_v_maxE.Inputs trk_theta_v pfnplanehits_Y
+
+Slimmer.Operation.trk_phi_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_phi_v_maxE.Output trk_phi_v_maxE
+Slimmer.Operation.trk_phi_v_maxE.Inputs trk_phi_v pfnplanehits_Y
+
+Slimmer.Operation.trk_dir_z_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_dir_z_v_maxE.Output trk_dir_z_v_maxE
+Slimmer.Operation.trk_dir_z_v_maxE.Inputs trk_dir_z_v pfnplanehits_Y
+
+Slimmer.Operation.trk_calo_energy_u_v_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.trk_calo_energy_u_v_maxE.Output trk_calo_energy_u_v_maxE
+Slimmer.Operation.trk_calo_energy_u_v_maxE.Inputs trk_calo_energy_u_v pfnplanehits_Y
+
+Slimmer.Operation.pfng2shravrg_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.pfng2shravrg_maxE.Output pfng2shravrg_maxE
+Slimmer.Operation.pfng2shravrg_maxE.Inputs pfng2shravrg pfnplanehits_Y
+
+Slimmer.Operation.pfng2mipfrac_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.pfng2mipfrac_maxE.Output pfng2mipfrac_maxE
+Slimmer.Operation.pfng2mipfrac_maxE.Inputs pfng2mipfrac pfnplanehits_Y
+
+Slimmer.Operation.pfng2hipfrac_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.pfng2hipfrac_maxE.Output pfng2hipfrac_maxE
+Slimmer.Operation.pfng2hipfrac_maxE.Inputs pfng2hipfrac pfnplanehits_Y
+
+Slimmer.Operation.pfng2bkgfrac_maxE.Type value_at_max_index_float_int
+Slimmer.Operation.pfng2bkgfrac_maxE.Output pfng2bkgfrac_maxE
+Slimmer.Operation.pfng2bkgfrac_maxE.Inputs pfng2bkgfrac pfnplanehits_Y
+
+Slimmer.Operation.pfnplanehits_U_maxE.Type value_at_max_index_int_int
+Slimmer.Operation.pfnplanehits_U_maxE.Output pfnplanehits_U_maxE
+Slimmer.Operation.pfnplanehits_U_maxE.Inputs pfnplanehits_U pfnplanehits_Y
+
+Slimmer.Operation.pfnplanehits_V_maxE.Type value_at_max_index_int_int
+Slimmer.Operation.pfnplanehits_V_maxE.Output pfnplanehits_V_maxE
+Slimmer.Operation.pfnplanehits_V_maxE.Inputs pfnplanehits_V pfnplanehits_Y
+
+Slimmer.Operation.pfnplanehits_Y_maxE.Type value_at_max_index_int_int
+Slimmer.Operation.pfnplanehits_Y_maxE.Output pfnplanehits_Y_maxE
+Slimmer.Operation.pfnplanehits_Y_maxE.Inputs pfnplanehits_Y pfnplanehits_Y
+
+Slimmer.Operation.KDAR_dump_filter.Type filter_expression
+Slimmer.Operation.KDAR_dump_filter.Expression par_decay_vz > 70000 && par_decay_pz < 0.01
+
+##############################################################
+#  Global context if running multiple modules
+##############################################################
+Global.RunLabel run4b
