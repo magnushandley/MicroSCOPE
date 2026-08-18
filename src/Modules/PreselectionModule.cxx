@@ -4,12 +4,16 @@
 #include "Utils/TimingUtils.hxx"
 
 #include <TEnv.h>
+#include <TDecompSVD.h>
 #include <TFile.h>
+#include <TMatrixD.h>
 #include <TString.h>
 #include <TH1D.h>
+#include <TVectorD.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <sstream>
 
 using namespace Analysis;
@@ -19,9 +23,9 @@ namespace {
 struct PlotRuntime {
     PlotConfig        config;
     std::vector<TH1D> histograms;
-    std::vector<TH1D> systVarianceHists;
-    TH1D              detVarVarianceHist;
-    bool              hasDetVarVariance = false;
+    std::vector<TMatrixD> systCovarianceMatrices;
+    TMatrixD              detVarCovariance;
+    bool                  hasDetVarCovariance = false;
 };
 
 std::string DefaultPlotWeightColumn(SampleType sampleType)
@@ -31,12 +35,139 @@ std::string DefaultPlotWeightColumn(SampleType sampleType)
         : "";
 }
 
-TH1D MakeEmptyVarianceHist(const TH1D& nominalHist, const std::string& suffix)
+TMatrixD MakeZeroCovariance(const int nBins)
 {
-    TH1D emptyVar = nominalHist;
-    emptyVar.SetName((std::string(nominalHist.GetName()) + suffix).c_str());
-    emptyVar.Reset("ICES");
-    return emptyVar;
+    TMatrixD covariance(nBins, nBins);
+    covariance.Zero();
+    return covariance;
+}
+
+TMatrixD MakeNormalisationCovariance(const TH1D& nominalHist)
+{
+    const int nBins = nominalHist.GetNbinsX();
+    TMatrixD covariance(nBins, nBins);
+    for (int i = 0; i < nBins; ++i) {
+        const double contentI = nominalHist.GetBinContent(i + 1);
+        for (int j = 0; j < nBins; ++j) {
+            covariance(i, j) = contentI * nominalHist.GetBinContent(j + 1);
+        }
+    }
+    return covariance;
+}
+
+struct ChiSquaredResult {
+    double chiSquared = std::numeric_limits<double>::quiet_NaN();
+    int ndf = 0;
+    int usableBins = 0;
+    int droppedModes = 0;
+    std::string error;
+};
+
+ChiSquaredResult CalculateCorrelatedChiSquared(
+    const TVectorD& data,
+    const TVectorD& prediction,
+    const TMatrixD& covariance)
+{
+    ChiSquaredResult result;
+    const int nBins = data.GetNrows();
+    if (prediction.GetNrows() != nBins
+        || covariance.GetNrows() != nBins
+        || covariance.GetNcols() != nBins) {
+        result.error = "dimension mismatch";
+        return result;
+    }
+
+    std::vector<int> candidateBins;
+    candidateBins.reserve(nBins);
+    for (int i = 0; i < nBins; ++i) {
+        if (std::isfinite(data(i))
+            && std::isfinite(prediction(i))
+            && std::isfinite(covariance(i, i))
+            && covariance(i, i) > 0.0) {
+            candidateBins.push_back(i);
+        }
+    }
+
+    std::vector<int> usableBins;
+    usableBins.reserve(candidateBins.size());
+    for (const int i : candidateBins) {
+        bool finiteRow = true;
+        for (const int j : candidateBins) {
+            if (!std::isfinite(covariance(i, j))) {
+                finiteRow = false;
+                break;
+            }
+        }
+        if (finiteRow) usableBins.push_back(i);
+    }
+
+    result.usableBins = static_cast<int>(usableBins.size());
+    if (usableBins.empty()) {
+        result.error = "no bins with finite positive variance";
+        return result;
+    }
+
+    const int dimension = result.usableBins;
+    TMatrixD reducedCovariance(dimension, dimension);
+    TVectorD residual(dimension);
+    for (int i = 0; i < dimension; ++i) {
+        residual(i) = data(usableBins[i]) - prediction(usableBins[i]);
+        for (int j = 0; j < dimension; ++j) {
+            // Numerical noise can make independently accumulated covariance
+            // matrices slightly asymmetric. SVD should see a symmetric matrix.
+            reducedCovariance(i, j) = 0.5 * (
+                covariance(usableBins[i], usableBins[j])
+                + covariance(usableBins[j], usableBins[i]));
+        }
+    }
+
+    TDecompSVD decomposition(reducedCovariance);
+    if (!decomposition.Decompose()) {
+        result.error = "SVD decomposition failed";
+        return result;
+    }
+
+    const TVectorD singularValues = decomposition.GetSig();
+    const TMatrixD matrixU = decomposition.GetU();
+    const TMatrixD matrixV = decomposition.GetV();
+    double maximumSingularValue = 0.0;
+    for (int i = 0; i < singularValues.GetNrows(); ++i) {
+        maximumSingularValue = std::max(maximumSingularValue, singularValues(i));
+    }
+    if (!(maximumSingularValue > 0.0) || !std::isfinite(maximumSingularValue)) {
+        result.error = "covariance has no positive singular values";
+        return result;
+    }
+
+    constexpr double relativeTolerance = 1.0e-12;
+    const double threshold = relativeTolerance * maximumSingularValue;
+    TMatrixD pseudoInverse(dimension, dimension);
+    pseudoInverse.Zero();
+    for (int mode = 0; mode < singularValues.GetNrows(); ++mode) {
+        const double singularValue = singularValues(mode);
+        if (!std::isfinite(singularValue) || singularValue <= threshold) continue;
+        ++result.ndf;
+        const double inverseSingularValue = 1.0 / singularValue;
+        for (int i = 0; i < dimension; ++i) {
+            for (int j = 0; j < dimension; ++j) {
+                pseudoInverse(i, j) += matrixV(i, mode)
+                    * inverseSingularValue
+                    * matrixU(j, mode);
+            }
+        }
+    }
+    result.droppedModes = dimension - result.ndf;
+    if (result.ndf == 0) {
+        result.error = "covariance has no retained SVD modes";
+        return result;
+    }
+
+    const TVectorD weightedResidual = pseudoInverse * residual;
+    result.chiSquared = residual * weightedResidual;
+    if (!std::isfinite(result.chiSquared)) {
+        result.error = "non-finite chi-squared";
+    }
+    return result;
 }
 
 } // namespace
@@ -345,32 +476,26 @@ void PreselectionModule::Initialise()
 
             TH1D& nominalHist = plot.histograms.back();
             if (!plot.config.enableSystematics) {
-                plot.systVarianceHists.push_back(MakeEmptyVarianceHist(nominalHist, "_systDisabledVar"));
+                plot.systCovarianceMatrices.push_back(
+                    MakeZeroCovariance(nominalHist.GetNbinsX()));
             } else if (IsOverlaySample(sampleType)) {
-                std::cout << "    Computing systematic variance histograms for sample: " << sampleLabel
+                std::cout << "    Computing systematic covariance matrix for sample: " << sampleLabel
                           << " and plot: " << plot.config.name << "\n";
                 SystematicsUtil sysUtil;
-                TH1D overlaySystHist = sysUtil.RunAllMultisimSystematics(
+                TMatrixD overlayCovariance = sysUtil.RunAllMultisimCovariance(
                     nominalHist,
                     node,
                     plot.config.column,
                     systConfig);
-                plot.systVarianceHists.push_back(std::move(overlaySystHist));
+                plot.systCovarianceMatrices.push_back(std::move(overlayCovariance));
             } else if (IsDirtSample(sampleType)) {
-                TH1D dirtVar = nominalHist;
-                dirtVar.SetName((std::string(nominalHist.GetName()) + "_dirtNormVar").c_str());
-                dirtVar.Reset("ICES");
-
-                for (int bin = 1; bin <= dirtVar.GetNbinsX(); ++bin) {
-                    const double content = nominalHist.GetBinContent(bin);
-                    const double variance = (1.0 * content) * (1.0 * content); //100% dirt normalization uncertainty
-                    dirtVar.SetBinContent(bin, variance);
-                    dirtVar.SetBinError(bin, 0.0);
-                }
-
-                plot.systVarianceHists.push_back(std::move(dirtVar));
+                // A normalization uncertainty is one nuisance shared by all
+                // bins, so the 100% dirt uncertainty is fully correlated.
+                plot.systCovarianceMatrices.push_back(
+                    MakeNormalisationCovariance(nominalHist));
             } else {
-                plot.systVarianceHists.push_back(MakeEmptyVarianceHist(nominalHist, "_emptyVar"));
+                plot.systCovarianceMatrices.push_back(
+                    MakeZeroCovariance(nominalHist.GetNbinsX()));
             }
         }
 
@@ -455,7 +580,7 @@ void PreselectionModule::Initialise()
                       << fSampleLabels[detVarCVIndex] << "\n";
 
             SystematicsUtil sysUtil;
-            plot.detVarVarianceHist = sysUtil.RunAllDetVarSystematics(
+            const TMatrixD detVarCovariance = sysUtil.RunAllDetVarCovariance(
                 detVarCVNominalHist,
                 nodes[detVarCVIndex],
                 detVarNodes,
@@ -464,7 +589,9 @@ void PreselectionModule::Initialise()
                 globalDetVarWeights,
                 nomHistScaleFactor,
                 weightCol);
-            plot.hasDetVarVariance = true;
+            plot.detVarCovariance.ResizeTo(detVarCovariance);
+            plot.detVarCovariance = detVarCovariance;
+            plot.hasDetVarCovariance = true;
         }
     };
 
@@ -477,27 +604,101 @@ void PreselectionModule::Initialise()
                 plot.config.xMin,
                 plot.config.xMax);
 
-            if (plot.systVarianceHists.size() != plotSampleWeights.size()) {
-                std::cerr << "[Preselection] ERROR: systVarianceHists size (" << plot.systVarianceHists.size()
+            TMatrixD totalSystematicCovariance(plot.config.nBins, plot.config.nBins);
+            totalSystematicCovariance.Zero();
+
+            if (plot.systCovarianceMatrices.size() != plotSampleWeights.size()) {
+                std::cerr << "[Preselection] ERROR: systCovarianceMatrices size (" << plot.systCovarianceMatrices.size()
                           << ") != plotted sample weights size (" << plotSampleWeights.size()
                           << ") for plot " << plot.config.outputName << "\n";
             }
 
-            const size_t n = std::min(plot.systVarianceHists.size(), plotSampleWeights.size());
+            const size_t n = std::min(plot.systCovarianceMatrices.size(), plotSampleWeights.size());
             for (size_t i = 0; i < n; ++i) {
-                TH1D varHist = plot.systVarianceHists[i];
                 const double weight = plotSampleWeights[i];
-                varHist.Scale(weight * weight);
-                totalVarianceHist.Add(&varHist);
+                TMatrixD covariance = plot.systCovarianceMatrices[i];
+                covariance *= weight * weight;
+                totalSystematicCovariance += covariance;
             }
 
-            if (plot.hasDetVarVariance) {
-                totalVarianceHist.Add(&plot.detVarVarianceHist);
+            if (plot.hasDetVarCovariance) {
+                totalSystematicCovariance += plot.detVarCovariance;
+            }
+
+            for (int bin = 0; bin < plot.config.nBins; ++bin) {
+                totalVarianceHist.SetBinContent(
+                    bin + 1,
+                    totalSystematicCovariance(bin, bin));
             }
 
             std::cout << "Total variance for plot " << plot.config.outputName << ":\n";
             for (int bin = 1; bin <= totalVarianceHist.GetNbinsX(); ++bin) {
                 std::cout << "  Bin " << bin << ": " << totalVarianceHist.GetBinContent(bin) << "\n";
+            }
+
+            TVectorD data(plot.config.nBins);
+            TVectorD background(plot.config.nBins);
+            data.Zero();
+            background.Zero();
+            TMatrixD chiSquaredCovariance = totalSystematicCovariance;
+            bool hasData = false;
+            bool hasBackground = false;
+
+            for (std::size_t sample = 0; sample < plot.histograms.size(); ++sample) {
+                const TH1D& histogram = plot.histograms[sample];
+                const double weight = plotSampleWeights[sample];
+                const double weightSquared = weight * weight;
+
+                if (IsDataSample(plotSampleTypes[sample])) {
+                    // Match FullDataMCSignalPlot's ratio behavior: use the
+                    // first configured data histogram.
+                    if (hasData) continue;
+                    hasData = true;
+                    for (int bin = 0; bin < plot.config.nBins; ++bin) {
+                        data(bin) = weight * histogram.GetBinContent(bin + 1);
+                        const double error = histogram.GetBinError(bin + 1);
+                        chiSquaredCovariance(bin, bin) += weightSquared * error * error;
+                    }
+                } else if (!IsSignalSample(plotSampleTypes[sample])) {
+                    hasBackground = true;
+                    for (int bin = 0; bin < plot.config.nBins; ++bin) {
+                        background(bin) += weight * histogram.GetBinContent(bin + 1);
+                        const double error = histogram.GetBinError(bin + 1);
+                        chiSquaredCovariance(bin, bin) += weightSquared * error * error;
+                    }
+                }
+            }
+
+            if (!hasData || !hasBackground) {
+                std::cout << "[Preselection] Plot " << plot.config.name
+                          << ": chi2 unavailable ("
+                          << (!hasData ? "no data histogram" : "no background histogram")
+                          << ")\n";
+            } else {
+                const ChiSquaredResult chiSquared = CalculateCorrelatedChiSquared(
+                    data,
+                    background,
+                    chiSquaredCovariance);
+                if (!chiSquared.error.empty()) {
+                    std::cout << "[Preselection] Plot " << plot.config.name
+                              << ": chi2 unavailable (" << chiSquared.error << ")\n";
+                } else {
+                    std::cout << "[Preselection] Plot " << plot.config.name
+                              << ": chi2 = " << chiSquared.chiSquared
+                              << ", ndf = " << chiSquared.ndf << "\n";
+                    if (chiSquared.usableBins != plot.config.nBins) {
+                        std::cout << "[Preselection] Plot " << plot.config.name
+                                  << ": excluded "
+                                  << (plot.config.nBins - chiSquared.usableBins)
+                                  << " bin(s) without finite positive variance.\n";
+                    }
+                    if (chiSquared.droppedModes > 0) {
+                        std::cout << "[Preselection] Plot " << plot.config.name
+                                  << ": SVD pseudoinverse dropped "
+                                  << chiSquared.droppedModes
+                                  << " singular covariance mode(s) at relative tolerance 1e-12.\n";
+                    }
+                }
             }
 
             Plotter::FullDataMCSignalPlot(

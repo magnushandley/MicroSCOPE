@@ -1176,7 +1176,7 @@ namespace Analysis
         }
     }
 
-    TH1D SystematicsUtil::RunAllMultisimSystematics(
+    TMatrixD SystematicsUtil::RunAllMultisimCovariance(
         const TH1D& nominalHist,
         const ROOT::RDF::RNode& rawDataFrame,
         const std::string& variableName,
@@ -1220,7 +1220,24 @@ namespace Analysis
         PlotFractionalCovarianceMatrix(reintCov, nominalHist, "reint_frac_cov");
         PlotFractionalCovarianceMatrix(totalCov, nominalHist, "total_frac_cov");
 
-        // Prepare actual uncertainty histogram to return (diagonal elements of total covariance)
+        return totalCov;
+    }
+
+    TH1D SystematicsUtil::RunAllMultisimSystematics(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::string& variableName,
+        const SystematicsConfig& systConfig
+    )
+    {
+        const TMatrixD totalCov = RunAllMultisimCovariance(
+            nominalHist,
+            rawDataFrame,
+            variableName,
+            systConfig);
+
+        // Prepare an uncertainty histogram from the covariance diagonal for
+        // callers that only draw an uncertainty band.
         TH1D totalVarHist(Form("%s_total_uncert", nominalHist.GetName()), Form("%s with Total Systematic Uncertainty;Variable;Events", nominalHist.GetTitle()), nominalHist.GetNbinsX(), nominalHist.GetXaxis()->GetXmin(), nominalHist.GetXaxis()->GetXmax());
 
         for (int i = 0; i < totalCov.GetNrows(); ++i)
@@ -1233,7 +1250,7 @@ namespace Analysis
         return totalVarHist;
     }
 
-    TH1D SystematicsUtil::RunAllDetVarSystematics(
+    TMatrixD SystematicsUtil::RunAllDetVarCovariance(
         const TH1D& nominalHist,
         const ROOT::RDF::RNode& rawDataFrame,
         const std::vector<ROOT::RDF::RNode>& detVarNodes,
@@ -1258,7 +1275,32 @@ namespace Analysis
         PlotMatrix(detVarCov, "detvar_cov");
         PlotFractionalCovarianceMatrix(detVarCov, nominalHist, "detvar_frac_cov");
 
-        // Prepare actual uncertainty histogram to return (diagonal elements of covariance)
+        return detVarCov;
+    }
+
+    TH1D SystematicsUtil::RunAllDetVarSystematics(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        const std::string& variableName,
+        const std::vector<double>& detVarGlobalWeights,
+        double nomHistScaleFactor,
+        const std::string& weightColumn
+    )
+    {
+        const TMatrixD detVarCov = RunAllDetVarCovariance(
+            nominalHist,
+            rawDataFrame,
+            detVarNodes,
+            detVarNames,
+            variableName,
+            detVarGlobalWeights,
+            nomHistScaleFactor,
+            weightColumn);
+
+        // Prepare an uncertainty histogram from the covariance diagonal for
+        // callers that only draw an uncertainty band.
         TH1D detVarUncertHist(Form("%s_detvar_uncert", nominalHist.GetName()), Form("%s with Detector Variation Uncertainty;Variable;Events", nominalHist.GetTitle()), nominalHist.GetNbinsX(), nominalHist.GetXaxis()->GetXmin(), nominalHist.GetXaxis()->GetXmax());
 
         for (int i = 0; i < detVarCov.GetNrows(); ++i)

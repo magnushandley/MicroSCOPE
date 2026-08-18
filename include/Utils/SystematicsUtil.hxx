@@ -107,7 +107,25 @@ namespace Analysis {
         const SystematicsConfig& systConfig
     );
 
+    TMatrixD RunAllMultisimCovariance(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::string& variableName,
+        const SystematicsConfig& systConfig
+    );
+
     TH1D RunAllDetVarSystematics(
+        const TH1D& nominalHist,
+        const ROOT::RDF::RNode& rawDataFrame,
+        const std::vector<ROOT::RDF::RNode>& detVarNodes,
+        const std::vector<std::string>& detVarNames,
+        const std::string& variableName,
+        const std::vector<double>& detVarGlobalWeights,
+        double nomHistScaleFactor,
+        const std::string& weightColumn
+    );
+
+    TMatrixD RunAllDetVarCovariance(
         const TH1D& nominalHist,
         const ROOT::RDF::RNode& rawDataFrame,
         const std::vector<ROOT::RDF::RNode>& detVarNodes,
