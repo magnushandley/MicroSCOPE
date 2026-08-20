@@ -295,18 +295,19 @@ PreselectionModule::PreselectionModule(const TEnv& cfg)
         fSampleTypes.end(),
         [](SampleType type) { return IsDetectorVariationSample(type); });
 
-    if (nDetVarSamples > 0 && nDetVarCVSamples == 0) {
-        throw std::runtime_error("[Preselection] SampleTypes contains detvar samples but no detvarcv sample.");
-    }
-    if (nDetVarCVSamples > 1) {
-        throw std::runtime_error("[Preselection] SampleTypes must contain at most one detvarcv sample.");
-    }
-    if (nDetVarCVSamples == 1 && nDetVarSamples == 0) {
-        std::cout << "[Preselection] Warning: detvarcv sample configured without detvar samples; "
-                  << "detector variation systematics will be skipped.\n";
-    }
 
     if (fMakePlots) {
+        if (nDetVarSamples > 0 && nDetVarCVSamples == 0) {
+            throw std::runtime_error("[Preselection] SampleTypes contains detvar samples but no detvarcv sample.");
+        }
+        if (nDetVarCVSamples > 1) {
+            throw std::runtime_error("[Preselection] SampleTypes must contain at most one detvarcv sample.");
+        }
+        if (nDetVarCVSamples == 1 && nDetVarSamples == 0) {
+            std::cout << "[Preselection] Warning: detvarcv sample configured without detvar samples; "
+                    << "detector variation systematics will be skipped.\n";
+        }
+
         fPlotConfigs = ParsePlotConfigs(cfg, "Preselection");
         if (fPlotConfigs.empty()) {
             throw std::runtime_error("[Preselection] MakePlots is enabled but Preselection.Plots is empty.");

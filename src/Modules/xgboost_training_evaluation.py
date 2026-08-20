@@ -4,6 +4,12 @@ import sys
 import uproot
 import pandas as pd
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import shap
 
 from typing import Dict, List, Optional
 
@@ -317,6 +323,39 @@ def train_xgboost_bdt(
     print(classification_report(y_test, y_pred, digits=4))
 
     return booster
+
+
+def save_shap_beeswarm(
+    booster: xgb.Booster,
+    X_test: pd.DataFrame,
+    output_path: Path,
+    random_state: int,
+    max_events: int = 10_000,
+) -> None:
+    """Save a SHAP beeswarm diagnostic for a deterministic test-set sample."""
+    if X_test.empty:
+        raise ValueError("Cannot make a SHAP beeswarm from an empty test set")
+
+    if len(X_test) > max_events:
+        X_shap = X_test.sample(n=max_events, random_state=random_state)
+    else:
+        X_shap = X_test.copy()
+
+    explainer = shap.TreeExplainer(booster)
+    shap_values = explainer(X_shap)
+    shap.plots.beeswarm(
+        shap_values,
+        max_display=X_shap.shape[1],
+        show=False,
+        plot_size="auto",
+    )
+
+    figure = plt.gcf()
+    figure.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(figure)
+
+    print(f"[xgboost] SHAP beeswarm events: {len(X_shap)}")
+    print(f"[xgboost] Saved SHAP beeswarm to {output_path}")
 
 
 # --- Helper functions for scoring and writing ROOT ---
@@ -759,6 +798,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(str(model_path))
     print(f"[xgboost] Saved model to {model_path}")
+
+    save_shap_beeswarm(
+        model,
+        X_test,
+        out_dir / "shap_beeswarm.png",
+        random_state=args.random_state,
+    )
 
     test_rows_by_file = {
         sf: set(g["row_in_file"].astype(int).tolist())
