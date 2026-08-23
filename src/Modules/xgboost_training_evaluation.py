@@ -325,6 +325,68 @@ def train_xgboost_bdt(
     return booster
 
 
+def print_shap_importance_table(
+    shap_values,
+    feature_names: List[str],
+    threshold: float = 0.999,
+) -> None:
+    """Print ranked mean absolute SHAP importance and a cumulative cutoff."""
+    values = np.asarray(shap_values.values)
+    if values.ndim != 2:
+        raise ValueError("SHAP values must have shape (events, features)")
+    if values.shape[1] != len(feature_names):
+        raise ValueError(
+            "SHAP feature count does not match the supplied feature names: "
+            f"{values.shape[1]} vs {len(feature_names)}"
+        )
+    if not 0.0 < threshold <= 1.0:
+        raise ValueError("SHAP importance threshold must be in (0, 1]")
+
+    mean_abs_shap = np.mean(np.abs(values), axis=0)
+    order = np.argsort(-mean_abs_shap, kind="stable")
+    sorted_importance = mean_abs_shap[order]
+    total_importance = float(sorted_importance.sum())
+
+    keep = np.zeros(len(feature_names), dtype=bool)
+    if total_importance > 0.0:
+        fractional_importance = sorted_importance / total_importance
+        cumulative_importance = np.cumsum(fractional_importance)
+        n_keep = int(np.searchsorted(cumulative_importance, threshold)) + 1
+        keep[:n_keep] = True
+    else:
+        fractional_importance = np.zeros(len(feature_names), dtype=float)
+        cumulative_importance = np.zeros(len(feature_names), dtype=float)
+
+    keep_column = f"Keep at {threshold:.1%}"
+    table = pd.DataFrame(
+        {
+            "Rank": np.arange(1, len(feature_names) + 1),
+            "Variable": np.asarray(feature_names)[order],
+            "Mean |SHAP|": sorted_importance,
+            "Fractional importance (%)": 100.0 * fractional_importance,
+            "Cumulative importance (%)": 100.0 * cumulative_importance,
+            keep_column: keep,
+        }
+    )
+
+    print(f"[xgboost] SHAP feature importance ({threshold:.1%} cutoff):")
+    print(
+        table.to_string(
+            index=False,
+            formatters={
+                "Mean |SHAP|": "{:.6g}".format,
+                "Fractional importance (%)": "{:.6f}".format,
+                "Cumulative importance (%)": "{:.6f}".format,
+            },
+        )
+    )
+    if total_importance == 0.0:
+        print(
+            "[xgboost] WARNING: all mean absolute SHAP values are zero; "
+            "no meaningful cumulative cutoff can be calculated."
+        )
+
+
 def save_shap_beeswarm(
     booster: xgb.Booster,
     X_test: pd.DataFrame,
@@ -343,6 +405,7 @@ def save_shap_beeswarm(
 
     explainer = shap.TreeExplainer(booster)
     shap_values = explainer(X_shap)
+    print_shap_importance_table(shap_values, list(X_shap.columns))
     shap.plots.beeswarm(
         shap_values,
         max_display=X_shap.shape[1],
@@ -799,12 +862,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     model.save_model(str(model_path))
     print(f"[xgboost] Saved model to {model_path}")
 
-    save_shap_beeswarm(
-        model,
-        X_test,
-        out_dir / "shap_beeswarm.png",
-        random_state=args.random_state,
-    )
+    #save_shap_beeswarm(
+    #    model,
+    #    X_test,
+    #    out_dir / "shap_beeswarm.png",
+    #    random_state=args.random_state,
+    #)
 
     test_rows_by_file = {
         sf: set(g["row_in_file"].astype(int).tolist())
