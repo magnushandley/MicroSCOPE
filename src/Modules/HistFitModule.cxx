@@ -192,6 +192,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fSRConstraintComparisonFitMode(ToLowerCopy(cfg.GetValue("HistFitModule.SRConstraintComparisonFitMode", "cr_only")))
     , fLegacySingleChannelMode(!ConfigHasKey(cfg, "HistFitModule.SampleChannels"))
     , fDetVarCovarianceTransferMode(ToLowerCopy(cfg.GetValue("HistFitModule.DetVarCovarianceTransferMode", "fractional")))
+    , fExpectedEndPointU2(std::stod(RequireConfigValue(cfg, "HistFitModule.ExpectedEndPointU2")))
 {
 
     std::stringstream ssInput{cfg.GetValue("HistFitModule.InputFiles", "")};
@@ -267,6 +268,18 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     }
     if (fRateScaling <= 0.0) {
         throw std::runtime_error("[HistFitModule] RateScaling must be positive.");
+    }
+    if (!std::isfinite(fDataPOT) || fDataPOT <= 0.0) {
+        throw std::runtime_error("[HistFitModule] DataPOT must be finite and positive.");
+    }
+    if (!std::isfinite(fSignalPOT) || fSignalPOT <= 0.0) {
+        throw std::runtime_error("[HistFitModule] SignalPOT must be finite and positive.");
+    }
+    if (!std::isfinite(fSimulatedSignalU2) || fSimulatedSignalU2 <= 0.0) {
+        throw std::runtime_error("[HistFitModule] SimulatedSignalU2 must be finite and positive.");
+    }
+    if (!std::isfinite(fExpectedEndPointU2) || fExpectedEndPointU2 <= 0.0) {
+        throw std::runtime_error("[HistFitModule] ExpectedEndPointU2 must be finite and positive.");
     }
     if (!std::isfinite(fBDTScoreMinX)) {
         throw std::runtime_error("[HistFitModule] BDTScoreMinX must be finite.");
@@ -1490,6 +1503,10 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
 
     // Build a RooStats HistFactory model from the input histograms, creating s and s+b models.
     // Samples are grouped into HistFactory channels using the configured channel labels.
+    const double scanMax = U2ToSignalStrength(fExpectedEndPointU2);
+    const double poiInitial = 0.1 * scanMax;
+    const double poiMax = 2.0 * scanMax;
+
     std::cout << "[HistFitModule] Building model workspace from histograms" << std::endl;
     RooStats::HistFactory::Measurement meas("meas", "meas");
     std::cout << "[HistFitModule] Measurement created" << std::endl;
@@ -1563,7 +1580,7 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                 channelInputs.histNames[i],
                 inputFile);
             if (IsSignalSample(sampleType)) {
-                sample.AddNormFactor("SigXsecOverSim", 0.0002, 0.0, 0.003);
+                sample.AddNormFactor("SigXsecOverSim", poiInitial, 0.0, poiMax);
                 sample.ActivateStatError();
                 const SignalNormSystematic normSyst =
                     SignalNormSystematicForChannel(channelInputs.name);
@@ -1731,14 +1748,21 @@ RooStats::ModelConfig* HistFitModule::GetBOnlyModel(RooWorkspace* ws) const
     return bModel;
 }
 
-double HistFitModule::CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const
+double HistFitModule::SignalStrengthToU2(double signalStrength) const
 {
-    // Based on the output of the CLs hypothesis test, which simply gives a limit 
-    // on the ratio of signal strength to that in the simulated signal sample, convert
-    // this to a limit on U^2.
-    double POTratio = signalPOT / dataPOT;
-    double UsquaredLimit = sqrt(cls * POTratio) * simulatedU2;
-    return UsquaredLimit;
+    // Convert a limit on the signal strength relative to the simulated signal sample
+    // into a limit on U^2.
+    const double potRatio = fSignalPOT / fDataPOT;
+    return std::sqrt(signalStrength * potRatio) * fSimulatedSignalU2;
+}
+
+double HistFitModule::U2ToSignalStrength(double u2) const
+{
+    // Convert a U^2 value into the corresponding signal strength relative to the
+    // simulated signal sample.
+    const double potRatio = fSignalPOT / fDataPOT;
+    const double u2Ratio = u2 / fSimulatedSignalU2;
+    return u2Ratio * u2Ratio / potRatio;
 }
 
 Long64_t HistFitModule::EntryCount() const
@@ -2611,8 +2635,21 @@ void HistFitModule::Initialise()
         throw std::runtime_error("POI is not a RooRealVar");
     }
 
+    const double scanMax = U2ToSignalStrength(fExpectedEndPointU2);
+    const double poiMax = 2.0 * scanMax;
+    const double poiInitial = 0.1 * scanMax;
+    const double sbSnapshot = 0.1 * scanMax;
+
+    std::cout << "[HistFitModule] CLs scan configuration: U^2 endpoint="
+              << fExpectedEndPointU2
+              << ", scanMax=" << scanMax
+              << ", poiMax=" << poiMax
+              << ", poiInitial=" << poiInitial
+              << ", sbSnapshot=" << sbSnapshot
+              << std::endl;
+
     // Save nominal S+B POI snapshot before constructing B-only snapshot.
-    poi->setVal(0.0001);
+    poi->setVal(sbSnapshot);
     sbModel->SetSnapshot(RooArgSet(*poi));
 
     RooStats::ModelConfig* bModel =
@@ -2644,7 +2681,7 @@ void HistFitModule::Initialise()
     inverter.SetConfidenceLevel(0.90);
     inverter.UseCLs(true);  
     inverter.SetVerbose(true);
-    inverter.SetFixedScan(300, 0.0, 0.0015);
+    inverter.SetFixedScan(300, 0.0, scanMax);
         
     RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
 
@@ -2664,7 +2701,7 @@ void HistFitModule::Initialise()
 
     if (!fBlindData){
         std::cout << "Converting to U^2 limits: " << std::endl;
-        double clsU2 = CLsOutputToU2(result->UpperLimit(), fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2 = SignalStrengthToU2(result->UpperLimit());
         std::cout << " Observed U^2 limit: " << clsU2 << std::endl;
 
         TCanvas* c_limit = new TCanvas("c_limit", "HypoTestInverter Result", 800, 600);
@@ -2683,11 +2720,11 @@ void HistFitModule::Initialise()
         double expectedLimitPlus2Sigma = result->GetExpectedUpperLimit(2);
         std::cout << "Converting expected limits to U^2: " << std::endl;
         std::cout << "Simulated POT: " << fSignalPOT << ", Data POT: " << fDataPOT << ", Simulated U^2: " << fSimulatedSignalU2 << std::endl;
-        double clsU2 = CLsOutputToU2(expectedLimit, fSimulatedSignalU2, fDataPOT, fSignalPOT);
-        double clsU2Minus1Sigma = CLsOutputToU2(expectedLimitMinus1Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
-        double clsU2Plus1Sigma = CLsOutputToU2(expectedLimitPlus1Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
-        double clsU2Minus2Sigma = CLsOutputToU2(expectedLimitMinus2Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
-        double clsU2Plus2Sigma = CLsOutputToU2(expectedLimitPlus2Sigma, fSimulatedSignalU2, fDataPOT, fSignalPOT);
+        double clsU2 = SignalStrengthToU2(expectedLimit);
+        double clsU2Minus1Sigma = SignalStrengthToU2(expectedLimitMinus1Sigma);
+        double clsU2Plus1Sigma = SignalStrengthToU2(expectedLimitPlus1Sigma);
+        double clsU2Minus2Sigma = SignalStrengthToU2(expectedLimitMinus2Sigma);
+        double clsU2Plus2Sigma = SignalStrengthToU2(expectedLimitPlus2Sigma);
         std::cout << " Expected U^2 limit (median): " << clsU2 << std::endl;
         std::cout << " Expected U^2 limit (-1 sigma): " << clsU2Minus1Sigma << std::endl;
         std::cout << " Expected U^2 limit (+1 sigma): " << clsU2Plus1Sigma << std::endl;

@@ -163,7 +163,8 @@ private:
 
     RooStats::ModelConfig* GetSPlusBModel(RooWorkspace* ws) const;
     RooStats::ModelConfig* GetBOnlyModel(RooWorkspace* ws) const;
-    double CLsOutputToU2(double cls, double simulatedU2, double dataPOT, double signalPOT) const;
+    double SignalStrengthToU2(double signalStrength) const;
+    double U2ToSignalStrength(double u2) const;
     double EffectiveTestFraction(std::size_t sampleIndex) const;
     double EffectiveSampleWeight(std::size_t sampleIndex) const;
     bool IsFitBackground(SampleType type) const;
@@ -207,6 +208,7 @@ private:
     bool fLegacySingleChannelMode; ///< True when SampleChannels is omitted and legacy names should be preserved
     std::unordered_map<std::string, std::string> fDetVarCovarianceTransfers; ///< target channel -> source channel
     std::string fDetVarCovarianceTransferMode; ///< Transfer mode for temporary detector covariance reuse
+    double fExpectedEndPointU2; ///< Configured U^2 endpoint for the signal-strength scan
 
 
     /// Working objects
