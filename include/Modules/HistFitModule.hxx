@@ -75,6 +75,9 @@ private:
         bool overlayShapeCovarianceIncludesDetVars = false;
         std::optional<RegionBinRange> overlayShapeCovarianceBinRange;
         std::string overlayShapeSystNamePrefix;
+        std::optional<TMatrixD> signalDetVarCovariance;
+        std::optional<RegionBinRange> signalDetVarCovarianceBinRange;
+        std::string signalDetVarSystNamePrefix;
     };
     struct SRPredictionSummary {
         std::string channelName;
@@ -101,20 +104,22 @@ private:
     std::unique_ptr<RooWorkspace> BuildModelWorkspace(
                                             std::vector<ChannelFitInputs>& channels,
                                             const std::string& inputFile) const;
-    std::vector<HistoSysVariation> WriteOverlayHistoSysVariations(
-                                            const TH1D& overlayHist,
-                                            const std::string& overlayHistName,
+    std::vector<HistoSysVariation> WriteCovarianceHistoSysVariations(
+                                            const TH1D& nominalHist,
+                                            const std::string& nominalHistName,
                                             double sampleWeight,
                                             const TMatrixD& covariance,
                                             const std::string& systNamePrefix,
+                                            const std::string& variationNameTag,
                                             const std::string& inputFile) const;
-    std::vector<HistoSysVariation> WriteOverlayHistoSysVariationsForBinRange(
-                                            const TH1D& overlayHist,
-                                            const std::string& overlayHistName,
+    std::vector<HistoSysVariation> WriteCovarianceHistoSysVariationsForBinRange(
+                                            const TH1D& nominalHist,
+                                            const std::string& nominalHistName,
                                             double sampleWeight,
                                             const TMatrixD& fullCovariance,
                                             RegionBinRange sourceBinRange,
                                             const std::string& systNamePrefix,
+                                            const std::string& variationNameTag,
                                             const std::string& inputFile) const;
     std::string WriteOverlayShapeSysUncertainty(
                                             const TH1D& overlayHist,
