@@ -121,6 +121,11 @@ private:
                                             const std::string& systNamePrefix,
                                             const std::string& variationNameTag,
                                             const std::string& inputFile) const;
+    HistoSysVariation WriteDirtNormalizationHistoSysVariation(
+                                            const TH1D& nominalHist,
+                                            const std::string& nominalHistName,
+                                            double sampleWeight,
+                                            const std::string& inputFile) const;
     std::string WriteOverlayShapeSysUncertainty(
                                             const TH1D& overlayHist,
                                             const std::string& overlayHistName,

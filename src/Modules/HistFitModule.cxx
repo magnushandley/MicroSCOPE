@@ -1465,6 +1465,45 @@ HistFitModule::WriteCovarianceHistoSysVariationsForBinRange(
     return variations;
 }
 
+HistFitModule::HistoSysVariation
+HistFitModule::WriteDirtNormalizationHistoSysVariation(
+    const TH1D& nominalHist,
+    const std::string& nominalHistName,
+    double sampleWeight,
+    const std::string& inputFile) const
+{
+    constexpr const char* systematicName = "dirt_norm_100pct";
+
+    TH1D lowHist = nominalHist;
+    TH1D highHist = nominalHist;
+    const std::string lowHistName = nominalHistName + "_dirt_norm_100pct_low";
+    const std::string highHistName = nominalHistName + "_dirt_norm_100pct_high";
+
+    lowHist.SetName(lowHistName.c_str());
+    highHist.SetName(highHistName.c_str());
+    lowHist.SetDirectory(nullptr);
+    highHist.SetDirectory(nullptr);
+
+    lowHist.Scale(sampleWeight);
+    highHist.Scale(sampleWeight);
+    lowHist.Reset("ICES");
+    highHist.Scale(2.0);
+
+    TFile outFile(inputFile.c_str(), "UPDATE");
+    if (outFile.IsZombie()) {
+        throw std::runtime_error(
+            "[HistFitModule] Cannot update histogram file with dirt normalization HistoSys variations: "
+            + inputFile);
+    }
+
+    outFile.cd();
+    lowHist.Write("", TObject::kOverwrite);
+    highHist.Write("", TObject::kOverwrite);
+    outFile.Close();
+
+    return {systematicName, lowHistName, highHistName};
+}
+
 std::string HistFitModule::WriteOverlayShapeSysUncertainty(
     const TH1D& overlayHist,
     const std::string& overlayHistName,
@@ -1727,6 +1766,24 @@ std::unique_ptr<RooWorkspace> HistFitModule::BuildModelWorkspace(
                     //     ? "overlay_multisim_norm_30pct"
                     //     : "overlay_multisim_" + channelInputs.name + "_norm_30pct";
                     // sample.AddOverallSys(normSystName, 0.7, 1.3);
+                } else if (IsDirtSample(sampleType)) {
+                    const HistoSysVariation variation =
+                        WriteDirtNormalizationHistoSysVariation(
+                            channelInputs.hists[i],
+                            channelInputs.histNames[i],
+                            channelInputs.sampleWeights[i],
+                            inputFile);
+                    sample.AddHistoSys(
+                        variation.systName,
+                        variation.lowHistName,
+                        inputFile,
+                        "",
+                        variation.highHistName,
+                        inputFile,
+                        "");
+                    std::cout << "[HistFitModule] Attached fully correlated 100% dirt normalization HistoSys "
+                              << variation.systName << " to "
+                              << channelInputs.histNames[i] << ".\n";
                 }
             } else {
                 throw std::runtime_error("[HistFitModule] Unsupported sample type in HistFactory model: "
@@ -2827,7 +2884,7 @@ void HistFitModule::Initialise()
 
     inverter.SetConfidenceLevel(0.90);
     inverter.UseCLs(true);  
-    inverter.SetVerbose(true);
+    inverter.SetVerbose(false);
     inverter.SetFixedScan(300, 0.0, scanMax);
         
     RooStats::HypoTestInverterResult* result =  inverter.GetInterval();
