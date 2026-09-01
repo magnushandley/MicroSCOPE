@@ -137,6 +137,8 @@ private:
                                             const std::string& sourceName,
                                             const TMatrixD& covariance,
                                             const TH1D& denominatorHist) const;
+    TH1D BuildBackgroundSystematicVarianceHistogram(
+                                            const ChannelFitInputs& channel) const;
     TMatrixD FractionalCovarianceFromAbsolute(
                                             const TMatrixD& covariance,
                                             const TH1D& scaledNominalHist) const;
@@ -204,6 +206,7 @@ private:
     double fSimulatedSignalU2; ///< The U^2 value used in the generator
     std::vector<double> fTestFractions; ///< Fractions of events to keep for each sample (for BDT test samples)
     double fRateScaling; ///< Optional global rate scaling for histogram contents
+    double fPlotSignalScale; ///< Display-only scale applied to signal histograms in plots
     bool fPlotSystematicsDebug; ///< Whether to write covariance diagnostic plots
     double fBDTScoreMinX; ///< Lower edge for dynamic BDT-score histograms
     int fBDTScoreBinsBelowOverflow; ///< Number of BDT-score bins before the overflow-like bin

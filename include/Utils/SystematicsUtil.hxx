@@ -60,7 +60,7 @@ namespace Analysis {
         const std::vector<TH1D>& detVarHists,
         const std::vector<double>& detVarWeights,
         const double nomHistScaleFactor,
-        const double uncertaintyCap = 0.5
+        const double uncertaintyCap = 0.75
     );
 
     TMatrixD BuildDetVarCovariance(

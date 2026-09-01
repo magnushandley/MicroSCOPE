@@ -10,6 +10,7 @@
 #include <sstream>
 #include <vector>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <cmath>
@@ -179,6 +180,7 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     , fSimulatedSignalU2(cfg.GetValue("HistFitModule.SimulatedSignalU2", 1.0e-4))
     , fBlindData  (cfg.GetValue("HistFitModule.BlindData", false))
     , fRateScaling(cfg.GetValue("HistFitModule.RateScaling", 1.0))
+    , fPlotSignalScale(cfg.GetValue("HistFitModule.PlotSignalScale", 1.0))
     , fPlotSystematicsDebug(cfg.GetValue("HistFitModule.PlotSystematicsDebug", false))
     , fBDTScoreMinX(cfg.GetValue("HistFitModule.BDTScoreMinX", -5.0))
     , fBDTScoreBinsBelowOverflow(cfg.GetValue("HistFitModule.BDTScoreBinsBelowOverflow", 9))
@@ -268,6 +270,9 @@ HistFitModule::HistFitModule(const TEnv& cfg)
     }
     if (fRateScaling <= 0.0) {
         throw std::runtime_error("[HistFitModule] RateScaling must be positive.");
+    }
+    if (!std::isfinite(fPlotSignalScale) || fPlotSignalScale <= 0.0 || fPlotSignalScale > 1.0) {
+        throw std::runtime_error("[HistFitModule] PlotSignalScale must be finite and in the range (0, 1].");
     }
     if (!std::isfinite(fDataPOT) || fDataPOT <= 0.0) {
         throw std::runtime_error("[HistFitModule] DataPOT must be finite and positive.");
@@ -457,6 +462,111 @@ void HistFitModule::PrintSourceFractionalUncertainties(
         }
         std::cout << "\n";
     }
+}
+
+TH1D HistFitModule::BuildBackgroundSystematicVarianceHistogram(
+    const ChannelFitInputs& channel) const
+{
+    if (channel.hists.empty()) {
+        throw std::runtime_error("[HistFitModule] Cannot build a background systematic variance histogram for empty channel "
+                                 + channel.name + ".");
+    }
+    if (channel.hists.size() != channel.sampleTypes.size()
+        || channel.hists.size() != channel.sampleWeights.size()) {
+        throw std::runtime_error("[HistFitModule] Cannot build background systematic variance for channel "
+                                 + channel.name + ": sample vectors have inconsistent sizes.");
+    }
+
+    const int nBins = channel.hists.front().GetNbinsX();
+    for (const TH1D& hist : channel.hists) {
+        if (hist.GetNbinsX() != nBins) {
+            throw std::runtime_error("[HistFitModule] Cannot build background systematic variance for channel "
+                                     + channel.name + ": histogram bin counts differ.");
+        }
+    }
+
+    TMatrixD totalCovariance(nBins, nBins);
+    totalCovariance.Zero();
+
+    if (channel.overlayShapeCovariance) {
+        const TMatrixD& overlayCovariance = *channel.overlayShapeCovariance;
+        if (overlayCovariance.GetNrows() != nBins || overlayCovariance.GetNcols() != nBins) {
+            throw std::runtime_error("[HistFitModule] Overlay covariance dimensions do not match histogram bins for plot channel "
+                                     + channel.name + ".");
+        }
+        for (int row = 0; row < nBins; ++row) {
+            for (int col = 0; col < nBins; ++col) {
+                if (!std::isfinite(overlayCovariance(row, col))) {
+                    throw std::runtime_error("[HistFitModule] Overlay covariance contains a non-finite value for plot channel "
+                                             + channel.name + ".");
+                }
+            }
+        }
+        totalCovariance += overlayCovariance;
+    }
+
+    // Every dirt sample is controlled by the same 100% normalization nuisance.
+    // Sum their fully scaled yields before taking the outer product so that the
+    // correlation between dirt samples is retained.
+    std::vector<double> totalDirtYield(nBins, 0.0);
+    for (std::size_t sample = 0; sample < channel.hists.size(); ++sample) {
+        if (!IsDirtSample(channel.sampleTypes[sample])) {
+            continue;
+        }
+
+        for (int bin = 0; bin < nBins; ++bin) {
+            const double scaledYield = channel.hists[sample].GetBinContent(bin + 1)
+                * channel.sampleWeights[sample];
+            if (!std::isfinite(scaledYield)) {
+                throw std::runtime_error("[HistFitModule] Dirt prediction contains a non-finite value for plot channel "
+                                         + channel.name + ".");
+            }
+            totalDirtYield[bin] += scaledYield;
+        }
+    }
+
+    for (int row = 0; row < nBins; ++row) {
+        for (int col = 0; col < nBins; ++col) {
+            totalCovariance(row, col) += totalDirtYield[row] * totalDirtYield[col];
+            if (!std::isfinite(totalCovariance(row, col))) {
+                throw std::runtime_error("[HistFitModule] Total background systematic covariance contains a non-finite value for plot channel "
+                                         + channel.name + ".");
+            }
+        }
+    }
+
+    TH1D varianceHistogram = channel.hists.front();
+    const std::string varianceName = "background_systematic_variance_" + channel.name;
+    varianceHistogram.SetName(varianceName.c_str());
+    varianceHistogram.SetTitle(("Background systematic variance: " + channel.name).c_str());
+    varianceHistogram.SetDirectory(nullptr);
+    varianceHistogram.Reset("ICES");
+
+    std::cout << "[HistFitModule] Background systematic variance for plot channel "
+              << channel.name << ":\n";
+    for (int bin = 0; bin < nBins; ++bin) {
+        double variance = totalCovariance(bin, bin);
+        if (variance < 0.0) {
+            std::cout << "[HistFitModule] WARNING: negative total systematic variance in channel "
+                      << channel.name << ", bin " << (bin + 1)
+                      << " (" << variance << "); clipping to zero for plotting.\n";
+            variance = 0.0;
+        }
+
+        const double overlayVariance = channel.overlayShapeCovariance
+            ? (*channel.overlayShapeCovariance)(bin, bin)
+            : 0.0;
+        const double dirtVariance = totalDirtYield[bin] * totalDirtYield[bin];
+        varianceHistogram.SetBinContent(bin + 1, variance);
+        varianceHistogram.SetBinError(bin + 1, 0.0);
+
+        std::cout << "  Bin " << (bin + 1)
+                  << ": overlay=" << overlayVariance
+                  << ", dirt_norm=" << dirtVariance
+                  << ", total=" << variance << "\n";
+    }
+
+    return varianceHistogram;
 }
 
 TMatrixD HistFitModule::FractionalCovarianceFromAbsolute(
@@ -2743,15 +2853,55 @@ void HistFitModule::Initialise()
             }
         }
 
-        const std::string plotBaseName = fLegacySingleChannelMode
-            ? "bdt_score_blinded_hist_tmva_histfitmodule"
-            : "bdt_score_blinded_hist_tmva_histfitmodule_" + channelInput.name;
-        Plotter::BlindedMCSignalPlot(
-            fitChannel.hists,
-            fitChannel.labels,
-            plotBaseName,
-            false, // logy
-            fitChannel.sampleWeights);
+        // Plotter::FullDataMCSignalPlot applies sample weights in place, and the
+        // signal display scale must never propagate to the HistFactory inputs.
+        // Keep every plot-side change confined to these copies.
+        std::vector<TH1D> plotHists = fitChannel.hists;
+        std::vector<std::string> plotLabels = fitChannel.labels;
+        std::ostringstream signalScaleText;
+        signalScaleText << std::setprecision(6) << fPlotSignalScale;
+        for (std::size_t i = 0; i < plotHists.size(); ++i) {
+            plotHists[i].SetDirectory(nullptr);
+            if (IsSignalSample(fitChannel.sampleTypes[i]) && fPlotSignalScale != 1.0) {
+                plotHists[i].Scale(fPlotSignalScale);
+                plotLabels[i] += " (#times" + signalScaleText.str() + ")";
+            }
+        }
+
+        if (fBlindData) {
+            const std::string plotBaseName = fLegacySingleChannelMode
+                ? "bdt_score_blinded_hist_tmva_histfitmodule"
+                : "bdt_score_blinded_hist_tmva_histfitmodule_" + channelInput.name;
+            Plotter::BlindedMCSignalPlot(
+                plotHists,
+                plotLabels,
+                plotBaseName,
+                false, // logy
+                fitChannel.sampleWeights);
+        } else {
+            TH1D backgroundSystematicVariance =
+                BuildBackgroundSystematicVarianceHistogram(fitChannel);
+            const std::string plotBaseName = fLegacySingleChannelMode
+                ? "bdt_score_hist_tmva_histfitmodule"
+                : "bdt_score_hist_tmva_histfitmodule_" + channelInput.name;
+
+            std::ostringstream potText;
+            potText << std::setprecision(3) << (fDataPOT / 1.0e20);
+            const std::string microBooNELabel =
+                "MicroBooNE " + potText.str() + "#times10^{20} POT";
+
+            Plotter::FullDataMCSignalPlot(
+                plotHists,
+                plotLabels,
+                fitChannel.sampleTypes,
+                plotBaseName,
+                false, // logy
+                fitChannel.sampleWeights,
+                0.3,
+                2.0,
+                &backgroundSystematicVariance,
+                microBooNELabel);
+        }
 
         for (std::size_t i = 0; i < fitChannel.hists.size(); ++i) {
             allFitHistsRateScaled.push_back(fitChannel.hists[i]);
